@@ -40,6 +40,10 @@
 
 #define DRV_NAME "msm-pcm-routing-v2"
 
+#ifdef CONFIG_CIRRUS_PLAYBACK
+#include <sound/msm-cirrus-playback.h>
+#endif
+
 #ifndef CONFIG_DOLBY_DAP
 #undef DOLBY_ADM_COPP_TOPOLOGY_ID
 #define DOLBY_ADM_COPP_TOPOLOGY_ID 0xFFFFFFFE
@@ -29612,6 +29616,9 @@ static int msm_routing_probe(struct snd_soc_component *component)
 			port_multi_channel_map_mixer_controls,
 			ARRAY_SIZE(port_multi_channel_map_mixer_controls));
 
+#ifdef CONFIG_CIRRUS_PLAYBACK
+	msm_crus_pb_add_controls(component);
+#endif
 	return 0;
 }
 
