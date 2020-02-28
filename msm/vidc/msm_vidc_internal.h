@@ -269,6 +269,7 @@ enum vpu_version {
 	VPU_VERSION_AR50 = 1,
 	VPU_VERSION_IRIS1,
 	VPU_VERSION_IRIS2,
+	VPU_VERSION_IRIS2_1,
 	VPU_VERSION_AR50_LITE,
 };
 
@@ -303,6 +304,7 @@ struct msm_vidc_platform_data {
 	unsigned int efuse_data_length;
 	unsigned int sku_version;
 	uint32_t vpu_ver;
+	uint32_t num_vpp_pipes;
 	struct msm_vidc_ubwc_config_data *ubwc_config;
 };
 

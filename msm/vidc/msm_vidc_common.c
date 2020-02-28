@@ -1798,9 +1798,8 @@ static void handle_event_change(enum hal_command_response cmd, void *data)
 			"seq: V4L2_EVENT_SEQ_CHANGED_INSUFFICIENT\n");
 
 		/* decide batching as configuration changed */
-		if (inst->batch.enable)
-			inst->batch.enable = is_batching_allowed(inst);
-		s_vpr_hp(inst->sid, "seq : batching %s\n", __func__,
+		inst->batch.enable = is_batching_allowed(inst);
+		s_vpr_hp(inst->sid, "seq : batching %s\n",
 			inst->batch.enable ? "enabled" : "disabled");
 		msm_dcvs_try_enable(inst);
 		extra_buff_count = msm_vidc_get_extra_buff_count(inst,
@@ -2834,7 +2833,16 @@ bool is_batching_allowed(struct msm_vidc_inst *inst)
 	maxmbs = inst->capability.cap[CAP_BATCH_MAX_MB_PER_FRAME].max;
 	maxfps = inst->capability.cap[CAP_BATCH_MAX_FPS].max;
 
-	return (is_single_session(inst, ignore_flags) &&
+	/*
+	 * if batching enabled previously then you may chose
+	 * to disable it based on recent configuration changes.
+	 * if batching already disabled do not enable it again
+	 * as sufficient extra buffers (required for batch mode
+	 * on both ports) may not have been updated to client.
+	 */
+	return (inst->batch.enable &&
+		inst->core->resources.decode_batching &&
+		is_single_session(inst, ignore_flags) &&
 		is_decode_session(inst) &&
 		!is_thumbnail_session(inst) &&
 		!inst->clk_data.low_latency_mode &&
@@ -6010,6 +6018,7 @@ int msm_comm_set_color_format(struct msm_vidc_inst *inst,
 void msm_comm_print_inst_info(struct msm_vidc_inst *inst)
 {
 	struct msm_vidc_buffer *mbuf;
+	struct msm_vidc_cvp_buffer *cbuf;
 	struct internal_buf *buf;
 	bool is_decode = false;
 	enum vidc_ports port;
@@ -6064,6 +6073,15 @@ void msm_comm_print_inst_info(struct msm_vidc_inst *inst)
 				buf->buffer_type, buf->smem.device_addr,
 				buf->smem.size);
 	mutex_unlock(&inst->outputbufs.lock);
+
+	mutex_lock(&inst->cvpbufs.lock);
+	s_vpr_e(inst->sid, "cvp buffer list:\n");
+	list_for_each_entry(cbuf, &inst->cvpbufs.list, list)
+		s_vpr_e(inst->sid,
+				"index: %u fd: %u offset: %u size: %u addr: %x\n",
+				cbuf->buf.index, cbuf->buf.fd, cbuf->buf.offset,
+				cbuf->buf.size, cbuf->smem.device_addr);
+	mutex_unlock(&inst->cvpbufs.lock);
 }
 
 int msm_comm_session_continue(void *instance)
