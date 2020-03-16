@@ -585,6 +585,10 @@ static int msm_vidc_load_regulator_table(
 		rinfo->has_hw_power_collapse = of_property_read_bool(
 			regulator_node, "qcom,support-hw-trigger");
 
+		if ((res->vpu_ver == VPU_VERSION_IRIS2_1)
+			&& (!strcmp(rinfo->name, "vcodec")))
+			rinfo->has_hw_power_collapse = 0;
+
 		d_vpr_h("Found regulator %s: h/w collapse = %s\n",
 				rinfo->name,
 				rinfo->has_hw_power_collapse ? "yes" : "no");
