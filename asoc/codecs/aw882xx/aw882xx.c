@@ -783,21 +783,6 @@ static int aw882xx_tx_enable_set(struct snd_kcontrol *kcontrol,
 
 	return 0;
 }
-
-static const struct snd_soc_dapm_widget aw882xx_dapm_widgets[] = {
-	SND_SOC_DAPM_AIF_IN("AW_DAI_RX", "Speaker_Playback", 0, 0, 0, 0),
-	SND_SOC_DAPM_AIF_OUT("AW_DAI_TX", "Speaker_Capture", 0, 0, 0, 0),	
-	SND_SOC_DAPM_OUTPUT("SPK_OUT"),
-	SND_SOC_DAPM_INPUT("CAPTURE_IN"),
-};
-
-static const struct snd_soc_dapm_route aw882xx_audio_map[] = {
-	{"AW_DAI_RX", NULL, "Speaker_Playback"},
-	{"Speaker_Capture", NULL, "AW_DAI_TX"},
-	{"AW_DAI_TX", NULL, "CAPTURE_IN"},
-	{"SPK_OUT", NULL, "AW_DAI_RX"},	
-};
-
 static const struct soc_enum aw882xx_snd_enum[] = {
 	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(spk_function), spk_function),
 	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(rcv_function), rcv_function),
@@ -1111,16 +1096,6 @@ static int aw882xx_codec_write(struct snd_soc_component *component,
 
 static struct snd_soc_component_driver soc_component_dev_aw882xx = {
 	.probe = aw882xx_probe,
-	//.component_driver = {
-		.dapm_widgets = aw882xx_dapm_widgets,
-		.num_dapm_widgets = ARRAY_SIZE(aw882xx_dapm_widgets),
-
-		.dapm_routes = aw882xx_audio_map,
-		.num_dapm_routes = ARRAY_SIZE(aw882xx_audio_map),
-
-		.controls = aw882xx_controls,
-		.num_controls = ARRAY_SIZE(aw882xx_controls),
-	//},
 	.remove = aw882xx_remove,
 	.read = aw882xx_codec_read,
 	.write = aw882xx_codec_write,
