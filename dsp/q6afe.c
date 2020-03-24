@@ -33,8 +33,8 @@
 #define AFE_PARAM_ID_AWDSP_RX_SET_ENABLE	(0x10013D11)
 #define AFE_PARAM_ID_AWDSP_TX_SET_ENABLE	(0x10013D13)
 #define AFE_PARAM_ID_AWDSP_RX_PARAMS            (0x10013D12)
-#define AFE_PORT_ID_AWDSP_RX			(AFE_PORT_ID_TERTIARY_MI2S_RX)
-#define AFE_PORT_ID_AWDSP_TX			(AFE_PORT_ID_TERTIARY_MI2S_TX)
+#define AFE_PORT_ID_AWDSP_RX			(AFE_PORT_ID_SECONDARY_MI2S_RX) //0x1002
+#define AFE_PORT_ID_AWDSP_TX			(AFE_PORT_ID_SECONDARY_MI2S_TX) //0x1003
 #endif /* #ifdef CONFIG_SND_SOC_AWINIC_AW882XX */
 
 #define WAKELOCK_TIMEOUT	5000
@@ -3450,15 +3450,15 @@ done:
 }
 
 #ifdef CONFIG_SND_SOC_AWINIC_AW882XX
-int aw_send_afe_rx_module_enable(void *buf, int size)
+int aw_send_afe_rx_module_enable(void *buf, int cmd_size)
 {
 	union afe_spkr_prot_config config;
 	int32_t port_id = AFE_PORT_ID_AWDSP_RX;
 
-	if (size > sizeof(config))
+	if (cmd_size > sizeof(config))
 		return -EINVAL;
 
-	memcpy(&config, buf, size);
+	memcpy(&config, buf, cmd_size);
 
 	if (afe_spk_prot_prepare(port_id, 0,
 		AFE_PARAM_ID_AWDSP_RX_SET_ENABLE, &config)) {
@@ -3468,15 +3468,15 @@ int aw_send_afe_rx_module_enable(void *buf, int size)
 	return 0;
 }
 EXPORT_SYMBOL(aw_send_afe_rx_module_enable);
-int aw_send_afe_tx_module_enable(void *buf, int size)
+int aw_send_afe_tx_module_enable(void *buf, int cmd_size)
 {
 	union afe_spkr_prot_config config;
 	int32_t port_id = AFE_PORT_ID_AWDSP_TX;
 
-	if (size > sizeof(config))
+	if (cmd_size > sizeof(config))
 		return -EINVAL;
 
-	memcpy(&config, buf, size);
+	memcpy(&config, buf, cmd_size);
 
 	if (afe_spk_prot_prepare(port_id, 0,
 		AFE_PARAM_ID_AWDSP_TX_SET_ENABLE, &config)) {
@@ -3619,6 +3619,45 @@ void aw_cal_unmap_memory(void)
 	}
 }
 EXPORT_SYMBOL(aw_cal_unmap_memory);
+
+int aw_send_rx_module_enable(void *buf, int cmd_size)
+{
+	union afe_spkr_prot_config config;
+	int32_t port_id = AFE_PORT_ID_AWDSP_RX;
+
+	if (cmd_size > sizeof(config))
+		return -EINVAL;
+
+	memcpy(&config, buf, cmd_size);
+	if (afe_spk_prot_prepare(port_id, 0,
+			AFE_PARAM_ID_AWDSP_RX_SET_ENABLE,
+			&config)) {
+		pr_err("%s: AW set rx bypass failed\n",
+				   __func__);
+	}
+	return 0;
+}
+EXPORT_SYMBOL(aw_send_rx_module_enable);
+
+int aw_send_tx_module_enable(void *buf, int cmd_size)
+{
+	union afe_spkr_prot_config config;
+	int32_t port_id = AFE_PORT_ID_AWDSP_TX;
+
+	if (cmd_size > sizeof(config))
+		return -EINVAL;
+
+	memcpy(&config, buf, cmd_size);
+	if (afe_spk_prot_prepare(port_id, 0,
+			AFE_PARAM_ID_AWDSP_TX_SET_ENABLE,
+			&config)) {
+		pr_err("%s: AW set tx module enable failed\n",
+				   __func__);
+	}
+	return 0;
+}
+EXPORT_SYMBOL(aw_send_tx_module_enable);
+
 #endif
 
 

@@ -4,8 +4,8 @@ EXTRA_CFLAGS += -I$(TOP)/vendor/qcom/opensource/audio-kernel/include
 EXTRA_CFLAGS += -I$(TOP)/vendor/qcom/opensource/audio-kernel/include/uapi/
 
 ifneq (,$(filter nairo%, $(TARGET_PRODUCT)))
-EXTRA_CFLAGS += -DCONFIG_AW882XX_CODEC -DCONFIG_AW882XX_DSP -DCONFIG_AW882XX_CALI_FS
+EXTRA_CFLAGS += -DCONFIG_AW882XX_CODEC -DCONFIG_AW882XX_DSP
 endif
 
-aw882xx_k419-objs = aw882xx.o aw_cali_fs.o
+aw882xx_k419-objs = aw882xx.o
 obj-m += aw882xx_k419.o
