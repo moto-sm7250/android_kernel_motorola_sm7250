@@ -7462,12 +7462,6 @@ int msm_comm_check_window_bitrate(struct msm_vidc_inst *inst,
 		!frame_data->filled_len)
 		return 0;
 
-	/*
-	 * MaxAvgFrameSize <= (1 + B/S) * (MaxClock / fps - 25*NumOfMacroBlockperFrame) / 1.35
-	 * S: Sliding window = #Frames in 40ms (av sync window) Closest point
-	 * B: Buffer Count = B(vsp-vpp) = 2 for 2Stage, 0 for 1stage
-	 */
-
 	fps = inst->clk_data.frame_rate >> 16;
 	window_size = inst->core->resources.avsync_window_size * fps;
 	window_size = DIV_ROUND_CLOSEST(window_size, 1000);
