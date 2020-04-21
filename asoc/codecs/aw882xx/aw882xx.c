@@ -84,12 +84,11 @@ static int aw_send_tx_module_enable(void *buf, int cmd_size)
 {
 	return 0;
 }
-static int aw_adm_param_enable(int port_id, int copp_idx, int module_id, int param_id,  int enable)
+static int aw_adm_param_enable(int port_id, int module_id, int param_id,  int enable)
 {
 	return 0;
 }
 #endif
-
 
 static int aw882xx_get_cali_re_form_nv(int32_t *cali_re);
 static int aw882xx_set_cali_re(struct aw882xx *aw882xx, int32_t cali_re);
@@ -176,26 +175,38 @@ static int aw882xx_i2c_writes(struct aw882xx *aw882xx,
 	return ret;
 }
 
+
 static int aw882xx_i2c_reads(struct aw882xx *aw882xx,
-	unsigned char reg_addr, unsigned char *buf, unsigned int len)
+	unsigned char reg_addr, unsigned char *data_buf, unsigned int data_len)
 {
 	int ret = -1;
+	struct i2c_msg msg[] = {
+		[0] = {
+			.addr = aw882xx->i2c->addr,
+			.flags = 0,
+			.len = sizeof(uint8_t),
+			.buf = &reg_addr,
+			},
+		[1] = {
+			.addr = aw882xx->i2c->addr,
+			.flags = I2C_M_RD,
+			.len = data_len,
+			.buf = data_buf,
+			},
+	};
 
-	ret = i2c_smbus_write_byte(aw882xx->i2c, reg_addr);
+	ret = i2c_transfer(aw882xx->i2c->adapter, msg, ARRAY_SIZE(msg));
 	if (ret < 0) {
 		pr_err("%s: i2c master send error, ret=%d\n",
 			__func__, ret);
 		return ret;
-	}
-
-	ret = i2c_master_recv(aw882xx->i2c, buf, len);
-	if (ret != len) {
+	} else if (ret != AW882XX_I2C_READ_MSG_NUM) {
 		pr_err("%s: couldn't read registers, return %d bytes\n",
 			__func__, ret);
-		return ret;
+		return -ENXIO;
 	}
 
-	return ret;
+	return 0;
 }
 
 static int aw882xx_i2c_write(struct aw882xx *aw882xx,
@@ -207,7 +218,6 @@ static int aw882xx_i2c_write(struct aw882xx *aw882xx,
 
 	buf[0] = (reg_data&0xff00)>>8;
 	buf[1] = (reg_data&0x00ff)>>0;
-
 	while (cnt < AW_I2C_RETRIES) {
 		ret = aw882xx_i2c_writes(aw882xx, reg_addr, buf, 2);
 		if (ret < 0)
@@ -254,6 +264,7 @@ static int aw882xx_i2c_write_bits(struct aw882xx *aw882xx,
 		pr_err("%s: i2c read error, ret=%d\n", __func__, ret);
 		return ret;
 	}
+
 	reg_val &= mask;
 	reg_val |= reg_data;
 	ret = aw882xx_i2c_write(aw882xx, reg_addr, reg_val);
@@ -327,7 +338,7 @@ static int aw882xx_sysst_check(struct aw882xx *aw882xx)
 
 	for (i = 0; i < AW882XX_SYSST_CHECK_MAX; i++) {
 		aw882xx_i2c_read(aw882xx, AW882XX_SYSST_REG, &reg_val);
-		if ((reg_val & (~AW882XX_SYSST_CHECK_MASK)) ==
+		if (((reg_val & (~AW882XX_SYSST_CHECK_MASK)) & AW882XX_SYSST_CHECK) ==
 			AW882XX_SYSST_CHECK) {
 			ret = 0;
 			break;
@@ -339,8 +350,6 @@ static int aw882xx_sysst_check(struct aw882xx *aw882xx)
 	}
 	if (ret < 0)
 		pr_info("%s: check fail\n", __func__);
-
-	ret = 0;
 
 	return ret;
 }
@@ -439,9 +448,11 @@ static int aw882xx_set_vcalb(struct aw882xx *aw882xx)
 
 static void aw882xx_send_cali_re_to_dsp(struct aw882xx *aw882xx)
 {
-	int ret;
-	ret = aw_send_afe_cal_apr(AFE_PARAM_ID_AWDSP_RX_RE_L,
-		&aw882xx->cali_re, sizeof(int32_t), true);
+	int ret = 0;
+	if ((aw882xx != NULL) && (aw882xx->cali_re != ERRO_CALI_VALUE)) {
+		ret = aw_send_afe_cal_apr(AFE_PARAM_ID_AWDSP_RX_RE_L,
+			&aw882xx->cali_re, sizeof(int32_t), true);
+	}
 	if (ret)
 		pr_err("%s : set cali re to dsp failed 0x%x\n",
 			__func__ , AFE_PARAM_ID_AWDSP_RX_RE_L);
@@ -455,9 +466,9 @@ static void aw882xx_start(struct aw882xx *aw882xx)
 
 	ret = aw882xx_get_cali_re_form_nv(&cali_re);
 	if (ret < 0) {
-		cali_re = (DEFAULT_CALI_VALUE << 12);
+		cali_re = ERRO_CALI_VALUE;
 		pr_err("%s: use default vaule %d",
-			__func__ , DEFAULT_CALI_VALUE);
+			__func__ , ERRO_CALI_VALUE);
 	}
 	ret = aw882xx_set_cali_re(aw882xx, cali_re);
 	if (ret < 0)
@@ -1228,6 +1239,7 @@ static int aw882xx_hw_params(struct snd_pcm_substream *substream,
 	struct aw882xx *aw882xx = snd_soc_component_get_drvdata(component);
 	unsigned int rate = 0;
 	int reg_value = 0;
+	uint32_t cco_mux_value;
 	int width = 0;
 
 	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
@@ -1244,30 +1256,40 @@ static int aw882xx_hw_params(struct snd_pcm_substream *substream,
 	switch (rate) {
 	case 8000:
 		reg_value = AW882XX_I2SSR_8KHZ_VALUE;
+		cco_mux_value = AW882XX_I2S_CCO_MUX_8_16_32KHZ_VALUE;
 		break;
 	case 16000:
 		reg_value = AW882XX_I2SSR_16KHZ_VALUE;
+		cco_mux_value = AW882XX_I2S_CCO_MUX_8_16_32KHZ_VALUE;
 		break;
 	case 32000:
 		reg_value = AW882XX_I2SSR_32KHZ_VALUE;
+		cco_mux_value = AW882XX_I2S_CCO_MUX_8_16_32KHZ_VALUE;
 		break;
 	case 44100:
 		reg_value = AW882XX_I2SSR_44P1KHZ_VALUE;
+		cco_mux_value = AW882XX_I2S_CCO_MUX_EXC_8_16_32KHZ_VALUE;
 		break;
 	case 48000:
 		reg_value = AW882XX_I2SSR_48KHZ_VALUE;
+		cco_mux_value = AW882XX_I2S_CCO_MUX_EXC_8_16_32KHZ_VALUE;
 		break;
 	case 96000:
 		reg_value = AW882XX_I2SSR_96KHZ_VALUE;
+		cco_mux_value = AW882XX_I2S_CCO_MUX_EXC_8_16_32KHZ_VALUE;
 		break;
 	case 192000:
 		reg_value = AW882XX_I2SSR_192KHZ_VALUE;
+		cco_mux_value = AW882XX_I2S_CCO_MUX_EXC_8_16_32KHZ_VALUE;
 		break;
 	default:
 		reg_value = AW882XX_I2SSR_48KHZ_VALUE;
+		cco_mux_value = AW882XX_I2S_CCO_MUX_EXC_8_16_32KHZ_VALUE;
 		pr_err("%s: rate can not support\n", __func__);
 		break;
 	}
+	aw882xx_i2c_write_bits(aw882xx, AW882XX_PLLCTRL1_REG,
+				AW882XX_I2S_CCO_MUX_MASK, cco_mux_value);
 
 	/* set chip rate */
 	if (-1 != reg_value) {
@@ -2043,30 +2065,6 @@ static DEVICE_ATTR(vol, S_IWUSR | S_IRUGO,
 	aw882xx_vol_show, aw882xx_vol_store);
 static DEVICE_ATTR(temp, S_IWUSR | S_IRUGO,
 	aw882xx_temp_show, aw882xx_temp_store);
-#endif
-
-
-#ifdef CONFIG_AW882XX_DSP
-extern int aw_send_afe_cal_apr(uint32_t param_id, void *buf,int cmd_size, bool write);
-extern int aw_send_rx_module_enable(void *buf, int cmd_size);
-extern int aw_send_tx_module_enable(void *buf, int cmd_size);
-extern int aw_adm_param_enable(int port_id, int module_id, int param_id,  int enable);
-#else
-static int aw_send_afe_cal_apr(uint32_t param_id, void *buf,int cmd_size, bool write) {
-    return 0;
-}
-static int aw_send_rx_module_enable(void *buf, int cmd_size)
-{
-	return 0;
-}
-static int aw_send_tx_module_enable(void *buf, int cmd_size)
-{
-	return 0;
-}
-static int aw_adm_param_enable(int port_id, int copp_idx, int module_id, int param_id,  int enable)
-{
-	return 0;
-}
 #endif
 
 static struct attribute *aw882xx_attributes[] = {
