@@ -3,7 +3,7 @@ EXTRA_CFLAGS += -Wall
 EXTRA_CFLAGS += -I$(TOP)/vendor/qcom/opensource/audio-kernel/include
 EXTRA_CFLAGS += -I$(TOP)/vendor/qcom/opensource/audio-kernel/include/uapi/
 
-ifneq (,$(filter nairo%, $(TARGET_PRODUCT)))
+ifneq (,$(filter nairo% kiev%, $(TARGET_PRODUCT)))
 EXTRA_CFLAGS += -DCONFIG_AW882XX_CODEC -DCONFIG_AW882XX_DSP
 endif
 
