@@ -4654,6 +4654,19 @@ exit:
 	return rc;
 }
 
+#if defined(CONFIG_PANEL_NOTIFICATIONS)
+static inline int dsi_panel_get_index(struct dsi_panel *panel)
+{
+	struct dsi_display *dsi_display =
+			container_of(panel->host, struct dsi_display, host);
+
+	if (unlikely(dsi_display == NULL))
+		return -EINVAL;
+
+	return dsi_display->display_idx;
+}
+#endif
+
 int dsi_panel_prepare(struct dsi_panel *panel)
 {
 	int rc = 0;
@@ -4687,6 +4700,7 @@ int dsi_panel_prepare(struct dsi_panel *panel)
 		       panel->name, rc);
 		goto error_disable_gpio;
 	}
+	PANEL_NOTIFY(PANEL_EVENT_PANEL_PREPARE);
 
 	goto end;
 error_disable_gpio:
@@ -4992,19 +5006,6 @@ int dsi_panel_post_switch(struct dsi_panel *panel)
 	mutex_unlock(&panel->panel_lock);
 	return rc;
 }
-
-#if defined(CONFIG_PANEL_NOTIFICATIONS)
-static inline int dsi_panel_get_index(struct dsi_panel *panel)
-{
-	struct dsi_display *dsi_display =
-			container_of(panel->host, struct dsi_display, host);
-
-	if (unlikely(dsi_display == NULL))
-		return -EINVAL;
-
-	return dsi_display->display_idx;
-}
-#endif
 
 int dsi_panel_enable(struct dsi_panel *panel)
 {
