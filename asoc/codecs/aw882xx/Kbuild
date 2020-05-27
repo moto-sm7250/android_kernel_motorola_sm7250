@@ -7,5 +7,9 @@ ifneq (,$(filter nairo% kiev%, $(TARGET_PRODUCT)))
 EXTRA_CFLAGS += -DCONFIG_AW882XX_CODEC -DCONFIG_AW882XX_DSP
 endif
 
+ifneq (,$(filter nairo%, $(TARGET_PRODUCT)))
+EXTRA_CFLAGS += -DNAIRO_DEFAULT_CALI_VAL
+endif
+
 aw882xx_k419-objs = aw882xx.o
 obj-m += aw882xx_k419.o
