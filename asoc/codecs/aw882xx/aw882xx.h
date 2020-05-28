@@ -26,7 +26,7 @@
 
 
 
-#define DEFAULT_CALI_VALUE (7)
+#define DEFAULT_CALI_VALUE (7 << 12)
 #define ERRO_CALI_VALUE (0)
 #define AFE_PARAM_ID_AWDSP_RX_SET_ENABLE        (0x10013D11)
 #define AFE_PARAM_ID_AWDSP_RX_PARAMS            (0x10013D12)
@@ -222,7 +222,7 @@ struct aw882xx {
 	unsigned int chipid;
 	unsigned int init;
 	unsigned int spk_rcv_mode;
-	int32_t cali_re;
+	uint32_t cali_re;
 	unsigned int cfg_num;
 	struct  profile_info profile;
 };
