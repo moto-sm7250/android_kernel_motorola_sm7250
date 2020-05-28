@@ -90,8 +90,8 @@ static int aw_adm_param_enable(int port_id, int module_id, int param_id,  int en
 }
 #endif
 
-static int aw882xx_get_cali_re_form_nv(int32_t *cali_re);
-static int aw882xx_set_cali_re(struct aw882xx *aw882xx, int32_t cali_re);
+static int aw882xx_get_cali_re_from_nv(uint32_t *cali_re);
+static int aw882xx_set_cali_re(struct aw882xx *aw882xx, uint32_t cali_re);
 static int aw882xx_load_profile_params(struct aw882xx *aw882xx);
 static void aw882xx_skt_set_dsp(int value);
 static int aw882xx_send_profile_params_to_dsp(struct aw882xx *aw882xx, int profile_id);
@@ -461,17 +461,13 @@ static void aw882xx_send_cali_re_to_dsp(struct aw882xx *aw882xx)
 static void aw882xx_start(struct aw882xx *aw882xx)
 {
 	int ret = -1;
-	int32_t cali_re;
+	uint32_t cali_re;
 	pr_debug("%s: enter\n", __func__);
 
-	ret = aw882xx_get_cali_re_form_nv(&cali_re);
+	ret = aw882xx_get_cali_re_from_nv(&cali_re);
 	if (ret < 0) {
-#ifdef NAIRO_DEFAULT_CALI_VAL
-		cali_re = 28672; /* 7*4096 */
-#else
-		cali_re = 28672; /* 7*4096 */
-#endif
-		pr_err("%s: use default vaule", __func__);
+		cali_re = aw882xx->cali_re;
+		pr_err("%s: use default vaule %d", __func__, cali_re);
 	}
 	ret = aw882xx_set_cali_re(aw882xx, cali_re);
 	if (ret < 0)
@@ -522,12 +518,12 @@ static void aw882xx_stop(struct aw882xx *aw882xx)
  * aw882xx config
  *
  ******************************************************/
-static int aw882xx_get_cali_re_form_nv(int32_t *cali_re)
+static int aw882xx_get_cali_re_from_nv(uint32_t *cali_re)
 {
 	/*custom add, if success return value is 0 , else -1*/
 	struct file *fp;
 	char buf[CALI_BUF_MAX];
-	int32_t read_re;
+	uint32_t read_re;
 	loff_t pos = 0;
 	mm_segment_t fs;
 
@@ -562,7 +558,7 @@ static int aw882xx_get_cali_re_form_nv(int32_t *cali_re)
 	return  0;
 }
 
-static int aw882xx_set_cali_re(struct aw882xx *aw882xx, int32_t cali_re)
+static int aw882xx_set_cali_re(struct aw882xx *aw882xx, uint32_t cali_re)
 {
 	if (aw882xx == NULL)
 		return -EINVAL;
@@ -1574,6 +1570,15 @@ static int aw882xx_parse_dt(struct device *dev, struct aw882xx *aw882xx,
 	} else {
 		dev_info(dev, "%s: monitor-timer-val = %d\n",
 			__func__, monitor->timer_val);
+	}
+
+	ret = of_property_read_u32(np, "cali-re-val", &aw882xx->cali_re);
+	if (ret) {
+		aw882xx->cali_re = DEFAULT_CALI_VALUE;
+		dev_err(dev, "%s: cali-re-val get failed, user default value!\n", __func__);
+	} else {
+		dev_info(dev, "%s: cali-re-val = %d\n",
+			__func__, aw882xx->cali_re);
 	}
 	return 0;
 }
