@@ -3492,7 +3492,8 @@ int aw_send_afe_rx_module_enable(void *buf, int cmd_size)
 	memcpy(&config, buf, cmd_size);
 
 	if (afe_spk_prot_prepare(port_id, 0,
-		AFE_PARAM_ID_AWDSP_RX_SET_ENABLE, &config)) {
+		AFE_PARAM_ID_AWDSP_RX_SET_ENABLE, &config,
+		  sizeof(union afe_spkr_prot_config))) {
 		pr_err("%s: set bypass failed \n", __func__);
 		return -EINVAL;
 	}
@@ -3510,7 +3511,8 @@ int aw_send_afe_tx_module_enable(void *buf, int cmd_size)
 	memcpy(&config, buf, cmd_size);
 
 	if (afe_spk_prot_prepare(port_id, 0,
-		AFE_PARAM_ID_AWDSP_TX_SET_ENABLE, &config)) {
+		AFE_PARAM_ID_AWDSP_TX_SET_ENABLE, &config,
+		  sizeof(union afe_spkr_prot_config))) {
 		pr_err("%s: set bypass failed \n", __func__);
 		return -EINVAL;
 	}
@@ -3662,7 +3664,7 @@ int aw_send_rx_module_enable(void *buf, int cmd_size)
 	memcpy(&config, buf, cmd_size);
 	if (afe_spk_prot_prepare(port_id, 0,
 			AFE_PARAM_ID_AWDSP_RX_SET_ENABLE,
-			&config)) {
+			&config, sizeof(union afe_spkr_prot_config))) {
 		pr_err("%s: AW set rx bypass failed\n",
 				   __func__);
 	}
@@ -3681,7 +3683,7 @@ int aw_send_tx_module_enable(void *buf, int cmd_size)
 	memcpy(&config, buf, cmd_size);
 	if (afe_spk_prot_prepare(port_id, 0,
 			AFE_PARAM_ID_AWDSP_TX_SET_ENABLE,
-			&config)) {
+			&config, sizeof(union afe_spkr_prot_config))) {
 		pr_err("%s: AW set tx module enable failed\n",
 				   __func__);
 	}
