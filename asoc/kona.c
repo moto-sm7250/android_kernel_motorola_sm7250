@@ -5676,7 +5676,6 @@ static struct snd_soc_pcm_stream awinic_amp_params[] = {
 
 
 #define MADERA_CLK_SYSCLK_1		1
-#define MADERA_CLK_SYSCLK_3		6
 #define MADERA_CLK_SRC_FLL1		0x4
 #define MADERA_CLK_SRC_AIF1BCLK        0x8
 #define MADERA_FLL_SRC_MCLK1            0
@@ -5890,7 +5889,7 @@ static int cirrus_amp_init(struct snd_soc_pcm_runtime *rtd)
 
 	dapm = snd_soc_component_get_dapm(component);
 
-	ret = snd_soc_dai_set_sysclk(codec_dai, MADERA_CLK_SYSCLK_3,
+	ret = snd_soc_dai_set_sysclk(codec_dai, MADERA_CLK_SYSCLK_1,
 					codec_clock, 0);
 	if (ret != 0) {
 		dev_err(component->dev, "Failed to set SYSCLK %d\n", ret);
