@@ -135,6 +135,7 @@ enum aw882xx_vmax_percentage {
 };
 
 #define AW882XX_MONITOR_DEFAULT_FLAG 0
+#define AW882XX_MONITOR_SYSCTRL 0
 #define AW882XX_MONITOR_DEFAULT_TIMER_VAL 30000
 #define AW882XX_MONITOR_VBAT_RANGE 6025
 #define AW882XX_MONITOR_INT_10BIT 1023
@@ -162,6 +163,7 @@ struct aw882xx_monitor{
 	uint32_t timer_val;
 	struct work_struct work;
 	uint32_t is_enable;
+	uint32_t sysctrl;
 	uint16_t pre_vol;
 	int16_t pre_temp;
 #ifdef AW_DEBUG
@@ -180,6 +182,9 @@ enum AWINIC_PROFILE{
 
 #define VERSION_MAX 4
 #define PROJECT_NAME_MAX 24
+#define VOLUME_STEP_DB  (6)
+#define VOLUME_MIN_NEG_90_DB  (90)
+#define FADE_STEP_DB   (6)
 
 typedef struct awinic_afe_param_header{
 	uint8_t fw[VERSION_MAX];
@@ -223,6 +228,7 @@ struct aw882xx {
 	unsigned int init;
 	unsigned int spk_rcv_mode;
 	uint32_t cali_re;
+	bool fade_in_out;
 	unsigned int cfg_num;
 	struct  profile_info profile;
 };
