@@ -3226,13 +3226,17 @@ static int swrm_runtime_suspend(struct device *dev)
 				swrm->ipc_wakeup_triggered = false;
 			}
 		}
+
 	}
+	if (swrm_request_hw_vote(swrm, LPASS_AUDIO_CORE, false))
+		dev_dbg(dev, "%s:lpass audio hw enable failed\n",
+			__func__);
 
 	/* Retain  SSR state until resume */
 	if (current_state != SWR_MSTR_SSR)
 		swrm->state = SWR_MSTR_DOWN;
-
 exit:
+
 	if (swrm->state != SWR_MSTR_UP) {
 		if (swrm_request_hw_vote(swrm, LPASS_AUDIO_CORE, false))
 			dev_dbg(dev, "%s:lpass audio hw enable failed\n",
