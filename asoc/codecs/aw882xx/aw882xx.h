@@ -20,13 +20,12 @@
 
 #define AW882XX_MODE_SHIFT_MAX				2
 
-#define AFE_RX_PROT_ID  0x1002				/*AFE_PORT_ID_SECONDARY_MI2S_RX */
+#define AW882XX_DEFAULT_AFE_RX_PROT_ID  0x1000				/*AFE_PORT_ID_PRIMARY_MI2S_RX*/
+#define AW882XX_DEFAULT_AFE_TX_PROT_ID  0x1001				/*AFE_PORT_ID_PRIMARY_MI2S_TX*/
 #define AW_MODULE_ID_COPP (0X10013D02)			/*SKT module id*/
 #define AW_MODULE_PARAMS_ID_COPP_ENABLE (0X10013D14)	/*SKT enable param id*/
 
-
-
-#define DEFAULT_CALI_VALUE (7 << 12)
+#define DEFAULT_CALI_VALUE (7)
 #define ERRO_CALI_VALUE (0)
 #define AFE_PARAM_ID_AWDSP_RX_SET_ENABLE        (0x10013D11)
 #define AFE_PARAM_ID_AWDSP_RX_PARAMS            (0x10013D12)
@@ -43,7 +42,6 @@
 #define AFE_PARAM_ID_AWDSP_RX_F0_R              (0X10013D20)
 #define AFE_PARAM_ID_AWDSP_RX_REAL_DATA_L       (0X10013D21)
 #define AFE_PARAM_ID_AWDSP_RX_REAL_DATA_R       (0X10013D22)
-
 
 enum AWINIC_CALI_CMD{
 	AW_CALI_CMD_NONE = 0,
@@ -93,6 +91,12 @@ enum aw882xx_init {
 	AW882XX_INIT_NG = 2,
 };
 
+enum aw882xx_power_status {
+	AW882XX_POWER_DOWN = 0,
+	AW882XX_POWER_ING = 1,
+	AW882XX_POWER_UP = 2,
+};
+
 enum aw882xx_chipid {
 	AW882XX_ID = 0x1852,
 };
@@ -135,7 +139,6 @@ enum aw882xx_vmax_percentage {
 };
 
 #define AW882XX_MONITOR_DEFAULT_FLAG 0
-#define AW882XX_MONITOR_SYSCTRL 0
 #define AW882XX_MONITOR_DEFAULT_TIMER_VAL 30000
 #define AW882XX_MONITOR_VBAT_RANGE 6025
 #define AW882XX_MONITOR_INT_10BIT 1023
@@ -163,15 +166,28 @@ struct aw882xx_monitor{
 	uint32_t timer_val;
 	struct work_struct work;
 	uint32_t is_enable;
-	uint32_t sysctrl;
 	uint16_t pre_vol;
 	int16_t pre_temp;
+
+	struct aw882xx_low_vol vol_cfg;
+	struct aw882xx_low_temp temp_cfg;
+	int vol_up_num;
+	int vol_down_num;
+	int temp_up_num;
+	int temp_down_num;
+	struct aw882xx_low_vol *vol_up_table;
+	struct aw882xx_low_vol *vol_down_table;
+	struct aw882xx_low_temp *temp_up_table;
+	struct aw882xx_low_temp *temp_down_table;
+
 #ifdef AW_DEBUG
 	uint16_t test_vol;
 	int16_t test_temp;
 #endif
 };
 
+/*control runin test function*/
+#define AW882XX_RUNIN_TEST
 enum AWINIC_PROFILE{
 	AW_PROFILE_MUSIC = 0,
 	AW_PROFILE_RINGTONE,
@@ -213,6 +229,9 @@ struct aw882xx {
 	struct mutex lock;
 
 	struct aw882xx_monitor monitor;
+#ifdef AW882XX_RUNIN_TEST
+	struct delayed_work adsp_status;
+#endif
 	int sysclk;
 	int rate;
 	int pstream;
@@ -220,6 +239,7 @@ struct aw882xx {
 
 	int reset_gpio;
 	int irq_gpio;
+	int power_flag;
 
 	unsigned char reg_addr;
 
@@ -228,8 +248,12 @@ struct aw882xx {
 	unsigned int init;
 	unsigned int spk_rcv_mode;
 	uint32_t cali_re;
-	bool fade_in_out;
+	uint32_t default_re;
+	uint8_t cur_gain;
 	unsigned int cfg_num;
+	unsigned int afe_rx_portid;
+	unsigned int afe_tx_portid;
+	unsigned int afe_profile;
 	struct  profile_info profile;
 };
 
