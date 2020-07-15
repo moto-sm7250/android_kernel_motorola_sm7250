@@ -120,6 +120,12 @@ ifneq ($(filter m y,$(CONFIG_CIRRUS_PLAYBACK)),)
 	EXTRA_CFLAGS += -DCONFIG_CIRRUS_PLAYBACK
 endif
 
+ifeq ($(TARGET_BUILD_VARIANT),userdebug)
+ifneq (,$(filter racer%, $(TARGET_PRODUCT)))
+    EXTRA_CFLAGS += -DADSP_RESTART_DEBUG
+endif
+endif
+
 ############ QDSP6V2 ############
 
 ifdef CONFIG_SND_SOC_MSM_QDSP6V2_INTF
