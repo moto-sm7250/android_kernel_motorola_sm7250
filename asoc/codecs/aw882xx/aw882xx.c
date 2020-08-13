@@ -1,7 +1,7 @@
 /*
  * aw882xx.c   aw882xx codec module
  *
- * Version: v0.1.12
+ * Version: v0.1.14
  *
  * keep same with AW882XX_VERSION
  *
@@ -50,7 +50,7 @@
  ******************************************************/
 #define AW882XX_I2C_NAME "aw882xx_smartpa"
 
-#define AW882XX_VERSION "v0.1.12"
+#define AW882XX_VERSION "v0.1.14"
 
 #define AW882XX_RATES SNDRV_PCM_RATE_8000_48000
 #define AW882XX_FORMATS (SNDRV_PCM_FMTBIT_S16_LE | \
@@ -65,6 +65,7 @@
 
 
 #define CALI_BUF_MAX 100
+#define DELAY_TIME_MAX 300
 #define AWINIC_CALI_FILE  "/mnt/vendor/persist/factory/audio/aw_cali.bin"
 
 #ifdef CONFIG_AW882XX_DSP
@@ -100,7 +101,8 @@ static int aw882xx_set_cali_re(struct aw882xx *aw882xx, uint32_t cali_re);
 static int aw882xx_load_profile_params(struct aw882xx *aw882xx);
 static int aw882xx_skt_set_dsp(int value);
 static int aw882xx_send_profile_params_to_dsp(struct aw882xx *aw882xx, int profile_id, bool is_fade);
-static void aw882xx_fade_in_out(struct aw882xx *aw882xx, bool is_fade_in);
+static void aw882xx_fade_in_out(struct aw882xx *aw882xx);
+static void aw882xx_volume_set(struct aw882xx *aw882xx, unsigned int value);
 
 /*monitor  voltage and temperature table*/
 static struct aw882xx_low_vol vol_down_table[] = {
@@ -295,8 +297,12 @@ static void aw882xx_run_mute(struct aw882xx *aw882xx, bool mute)
 	pr_debug("%s: enter\n", __func__);
 
 	if (mute) {
-		if (aw882xx->need_fade)
-			aw882xx_fade_in_out(aw882xx, false);
+		if (aw882xx->need_fade) {
+			aw882xx->is_fade_in = 0;
+			aw882xx->fade_work_start = 1;
+			cancel_delayed_work_sync(&aw882xx->fade_work);
+			aw882xx_fade_in_out(aw882xx);
+		}
 		aw882xx_i2c_write_bits(aw882xx, AW882XX_SYSCTRL2_REG,
 				AW882XX_HMUTE_MASK,
 				AW882XX_HMUTE_ENABLE_VALUE);
@@ -304,8 +310,13 @@ static void aw882xx_run_mute(struct aw882xx *aw882xx, bool mute)
 		aw882xx_i2c_write_bits(aw882xx, AW882XX_SYSCTRL2_REG,
 				AW882XX_HMUTE_MASK,
 				AW882XX_HMUTE_DISABLE_VALUE);
-		if (aw882xx->need_fade)
-			aw882xx_fade_in_out(aw882xx, true);
+		if (aw882xx->need_fade) {
+			aw882xx->is_fade_in = 1;
+			aw882xx->fade_work_start = 1;
+			aw882xx_volume_set(aw882xx, VOLUME_MIN_NEG_90_DB);
+			schedule_delayed_work(&aw882xx->fade_work,
+							msecs_to_jiffies(aw882xx->delayed_time));
+		}
 	}
 }
 
@@ -661,7 +672,11 @@ static void aw882xx_reg_loaded(const struct firmware *cont, void *context)
 		pr_err("%s: reg update fail\n", __func__);
 	} else {
 		pr_err("%s: reg update sucess\n", __func__);
-		aw882xx_run_mute(aw882xx, true);
+		//aw882xx_run_mute(aw882xx, true);
+		aw882xx_volume_set(aw882xx, VOLUME_MIN_NEG_90_DB);
+		aw882xx_i2c_write_bits(aw882xx, AW882XX_SYSCTRL2_REG,
+				AW882XX_HMUTE_MASK,
+				AW882XX_HMUTE_ENABLE_VALUE);
 		aw882xx_set_vcalb(aw882xx);
 	}
 	mutex_unlock(&aw882xx->lock);
@@ -1079,16 +1094,20 @@ static void aw882xx_volume_set(struct aw882xx *aw882xx, unsigned int value)
 	}
 }
 
-static void aw882xx_fade_in_out(struct aw882xx *aw882xx, bool is_fade_in)
+static void aw882xx_fade_in_out(struct aw882xx *aw882xx)
 {
 	int i = 0;
 
+	if(aw882xx == NULL) {
+		aw882xx->fade_work_start = 0;
+		return;
+	}
 	//volume up
-	if (is_fade_in) {
+	if (aw882xx->is_fade_in) {
 		i = VOLUME_MIN_NEG_90_DB;
 		do {
 			aw882xx_volume_set(aw882xx, i);
-			i -= FADE_STEP_DB;
+			i -= FADE_STEP_DB;       //6
 			usleep_range(1400,1600);
 		} while (i >= 0);
 	} else {  // volume down
@@ -1098,6 +1117,23 @@ static void aw882xx_fade_in_out(struct aw882xx *aw882xx, bool is_fade_in)
 			usleep_range(1400,1600);
 		} while (i <= VOLUME_MIN_NEG_90_DB);
 	}
+	aw882xx->fade_work_start = 0;
+}
+
+static void aw882xx_fade_work_func(struct work_struct *work)
+{
+	struct delayed_work *d_work;
+	struct aw882xx *aw882xx;
+
+	d_work = to_delayed_work(work);
+	aw882xx = container_of(d_work, struct aw882xx, fade_work);
+	if(aw882xx == NULL) {
+		pr_debug("%s: can not get aw882xx from fade_work\n", __func__);
+		return;
+	}
+	pr_debug("%s: enter in: %d\n", __func__, aw882xx->is_fade_in);
+
+	aw882xx_fade_in_out(aw882xx);
 }
 
 static int aw882xx_send_profile_params_to_dsp(struct aw882xx *aw882xx, int profile_id, bool is_fade)
@@ -1256,6 +1292,34 @@ static int aw882xx_monitor_set(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
+static int aw882xx_fade_dealyed_time_get(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *codec = snd_soc_kcontrol_component(kcontrol);
+	struct aw882xx *aw882xx = snd_soc_component_get_drvdata(codec);
+
+
+	pr_debug("%s: aw882xx_fade_dealyed_time_get %d\n",
+		__func__, aw882xx->delayed_time);
+
+	ucontrol->value.integer.value[0] = aw882xx->delayed_time;
+
+	return 0;
+}
+
+static int aw882xx_fade_dealyed_time_set(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *codec = snd_soc_kcontrol_component(kcontrol);
+	struct aw882xx *aw882xx = snd_soc_component_get_drvdata(codec);
+
+	aw882xx->delayed_time = ucontrol->value.integer.value[0];
+
+	pr_debug("%s: aw882xx_fade_dealyed_time_set %d ms \n", __func__, aw882xx->delayed_time);
+	return 0;
+}
+
+
 #ifdef AW882XX_RUNIN_TEST
 static int aw882xx_runin_test_get(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_value *ucontrol)
@@ -1330,6 +1394,8 @@ static struct snd_kcontrol_new aw882xx_controls[] = {
 		aw882xx_skt_disable_get, aw882xx_skt_disable_set),
 	SOC_ENUM_EXT("aw882xx_monitor_switch", aw882xx_snd_enum[1],
 		aw882xx_monitor_get, aw882xx_monitor_set),
+	SOC_SINGLE_EXT("aw882xx_fade_dealyed_time", SND_SOC_NOPM, 0, DELAY_TIME_MAX, 0,
+		       aw882xx_fade_dealyed_time_get, aw882xx_fade_dealyed_time_set),
 #ifdef AW882XX_RUNIN_TEST
 	SOC_ENUM_EXT("aw882xx_runin_test", aw882xx_snd_enum[0],
 		aw882xx_runin_test_get, aw882xx_runin_test_set),
@@ -1390,8 +1456,8 @@ static int aw882xx_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 	case SND_SOC_DAIFMT_I2S:
 		if ((fmt & SND_SOC_DAIFMT_MASTER_MASK) !=
 			SND_SOC_DAIFMT_CBS_CFS) {
-//			dev_err(component->dev, "%s: invalid codec master mode\n",
-//				__func__);
+			dev_err(component->dev, "%s: invalid codec master mode\n",
+				__func__);
 			return -EINVAL;
 		}
 		break;
@@ -2378,6 +2444,8 @@ static int aw882xx_cali_operation(struct aw882xx *aw882xx,
 	int16_t data_len  = _IOC_SIZE(cmd);
 	int ret = 0;
 	char *data_ptr = NULL;
+	struct ptr_params_data *p_params;
+	int32_t *p_data;
 
 
 	data_ptr = kmalloc(data_len, GFP_KERNEL);
@@ -2568,6 +2636,47 @@ static int aw882xx_cali_operation(struct aw882xx *aw882xx,
 				goto exit;
 			}
 			pr_debug("%s: set params done", __func__);
+		} break;
+		case AW882XX_IOCTL_SET_PTR_PARAM_NUM: {
+			if (copy_from_user(data_ptr, (void __user *)arg, data_len)) {
+				ret = -EFAULT;
+				goto exit;
+			}
+			p_params = (struct ptr_params_data *)data_ptr;
+			if (p_params->data == NULL || (!p_params->len)) {
+				pr_err("%s: p_params error\n", __func__);
+				ret = -EFAULT;
+				goto exit;
+			}
+			p_data = kzalloc(p_params->len, GFP_KERNEL);
+			if (!p_data) {
+				pr_err("%s: error allocating memory\n", __func__);
+				ret = -ENOMEM;
+				goto exit;
+			}
+
+			if (copy_from_user(p_data, (void __user *)p_params->data,
+					p_params->len)) {
+				kfree(p_data);
+				p_data = NULL;
+				ret = -EFAULT;
+				goto exit;
+			}
+
+			ret = aw_send_afe_cal_apr(aw882xx->afe_rx_portid,
+			            aw882xx->afe_tx_portid,
+			            AFE_PARAM_ID_AWDSP_RX_PARAMS,
+			            p_data, p_params->len, true);
+			if (ret) {
+				pr_err("%s: dsp_msg_write error: 0x%x\n",
+				      __func__, AFE_PARAM_ID_AWDSP_RX_PARAMS);
+				kfree(p_data);
+				p_data = NULL;
+				ret =-EFAULT;
+				goto exit;
+			}
+			kfree(p_data);
+			p_data = NULL;
 		} break;
 		default: {
 			pr_err("%s : cmd %d\n", __func__, cmd);
@@ -2955,7 +3064,11 @@ static void aw882xx_monitor_set_gain(struct aw882xx *aw882xx, uint8_t gain)
 	unsigned int read_reg_val;
 	int ret;
 
-	if (gain == GAIN_NONE)
+	if(aw882xx == NULL) {
+		return;
+	}
+
+	if (gain == GAIN_NONE || (aw882xx->fade_work_start == 1))
 		return;
 
 	ret = aw882xx_i2c_read(aw882xx, AW882XX_HAGCCFG4_REG, &reg_val);
@@ -3231,6 +3344,9 @@ static int aw882xx_i2c_probe(struct i2c_client *i2c,
 
 	aw882xx->default_re = 0;
 	aw882xx->need_fade = 0;
+	aw882xx->fade_work_start = 0;
+	aw882xx->delayed_time = 0;
+	aw882xx->is_fade_in = 0;
 	/*init profile*/
 	mutex_init(&aw882xx->profile.lock);
 	aw882xx->profile.cur_profile = 0;
@@ -3240,6 +3356,7 @@ static int aw882xx_i2c_probe(struct i2c_client *i2c,
 		aw882xx->profile.data[i] = NULL;
 	}
 
+	INIT_DELAYED_WORK(&aw882xx->fade_work, aw882xx_fade_work_func);
 	/*global init*/
 	atomic_set(&g_algo_rx_enable, 0);
 	atomic_set(&g_algo_tx_enable, 0);
