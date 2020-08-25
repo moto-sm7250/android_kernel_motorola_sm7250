@@ -1,7 +1,7 @@
 /*
  * aw882xx.c   aw882xx codec module
  *
- * Version: v0.1.14
+ * Version: v0.1.15
  *
  * keep same with AW882XX_VERSION
  *
@@ -50,7 +50,7 @@
  ******************************************************/
 #define AW882XX_I2C_NAME "aw882xx_smartpa"
 
-#define AW882XX_VERSION "v0.1.14"
+#define AW882XX_VERSION "v0.1.15"
 
 #define AW882XX_RATES SNDRV_PCM_RATE_8000_48000
 #define AW882XX_FORMATS (SNDRV_PCM_FMTBIT_S16_LE | \
@@ -1085,7 +1085,7 @@ static void aw882xx_volume_set(struct aw882xx *aw882xx, unsigned int value)
 	unsigned int reg_value = 0;
 	unsigned int real_value = ((value / VOLUME_STEP_DB) << 4) + (value % VOLUME_STEP_DB) * 2;
 
-	if(real_value > aw882xx->cur_gain) {
+	if(real_value >= aw882xx->cur_gain) {
 		/* cal real value */
 		aw882xx_i2c_read(aw882xx, AW882XX_HAGCCFG4_REG, &reg_value);
 		real_value = (real_value << 8) | (reg_value & 0x00ff);
@@ -1134,6 +1134,7 @@ static void aw882xx_fade_work_func(struct work_struct *work)
 	pr_debug("%s: enter in: %d\n", __func__, aw882xx->is_fade_in);
 
 	aw882xx_fade_in_out(aw882xx);
+	pr_debug("%s: exit\n", __func__);
 }
 
 static int aw882xx_send_profile_params_to_dsp(struct aw882xx *aw882xx, int profile_id, bool is_fade)
@@ -2374,6 +2375,54 @@ static ssize_t aw882xx_default_re_show(struct device *dev,
 	return len;
 }
 
+static ssize_t aw882xx_spk_temp_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct aw882xx *aw882xx = dev_get_drvdata(dev);
+	ssize_t len = 0;
+	int ret = -1;
+	int16_t data_len  = _IOC_SIZE(AW882XX_IOCTL_GET_CALI_DATA);
+	int32_t spk_temp = 0;
+	char *data_ptr = NULL;
+	unsigned int reg_value = 0;
+
+	if(aw882xx == NULL) {
+		goto fail_temp;
+	}
+	data_ptr = kmalloc(data_len, GFP_KERNEL);
+	if (data_ptr == NULL) {
+		pr_err("%s : malloc failed !\n", __func__);
+		goto fail_temp;
+	}
+
+	aw882xx_i2c_read(aw882xx, AW882XX_SYSST_REG, &reg_value);
+	if (!(reg_value & AW882XX_PLLS_LOCKED_VALUE)) {
+		pr_err("%s: NO I2S CLK\n", __func__);
+		goto exit_temp;
+	}
+
+	ret = aw_send_afe_cal_apr(aw882xx->afe_rx_portid,
+					aw882xx->afe_tx_portid,
+					AFE_PARAM_ID_AWDSP_RX_REAL_DATA_L,
+					data_ptr, data_len, false);
+	if (ret) {
+		pr_err("%s: dsp_msg_read error: %d\n", __func__, ret);
+		goto exit_temp;
+	}
+
+	memcpy(&spk_temp, data_ptr + sizeof(int32_t), sizeof(int32_t));
+	len += snprintf(buf+len, PAGE_SIZE-len,
+			"aw882xx spk_temp: %d\n", spk_temp);
+	return len;
+
+exit_temp:
+	kfree(data_ptr);
+fail_temp:
+	len += snprintf(buf+len, PAGE_SIZE-len,
+			"aw882xx spk_temp: fail\n");
+	return len;
+}
+
 #ifdef AW_DEBUG
 static ssize_t aw882xx_vol_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
@@ -2699,6 +2748,8 @@ static DEVICE_ATTR(mec, S_IWUSR | S_IRUGO,
 	aw882xx_mec_show, aw882xx_mec_store);
 static DEVICE_ATTR(default_re, S_IWUSR | S_IRUGO,
 	aw882xx_default_re_show, NULL);
+static DEVICE_ATTR(spk_temp, S_IWUSR | S_IRUGO,
+	aw882xx_spk_temp_show, NULL);
 #ifdef AW_DEBUG
 static DEVICE_ATTR(vol, S_IWUSR | S_IRUGO,
 	aw882xx_vol_show, aw882xx_vol_store);
@@ -2713,6 +2764,7 @@ static struct attribute *aw882xx_attributes[] = {
 	&dev_attr_spk_rcv.attr,
 	&dev_attr_mec.attr,
 	&dev_attr_default_re.attr,
+	&dev_attr_spk_temp.attr,
 #ifdef AW_DEBUG
 	&dev_attr_vol.attr,
 	&dev_attr_temp.attr,
@@ -3347,6 +3399,7 @@ static int aw882xx_i2c_probe(struct i2c_client *i2c,
 	aw882xx->fade_work_start = 0;
 	aw882xx->delayed_time = 0;
 	aw882xx->is_fade_in = 0;
+	aw882xx->cur_gain = 0;
 	/*init profile*/
 	mutex_init(&aw882xx->profile.lock);
 	aw882xx->profile.cur_profile = 0;
