@@ -1085,13 +1085,15 @@ static void aw882xx_volume_set(struct aw882xx *aw882xx, unsigned int value)
 	unsigned int reg_value = 0;
 	unsigned int real_value = ((value / VOLUME_STEP_DB) << 4) + (value % VOLUME_STEP_DB) * 2;
 
+	aw882xx_i2c_read(aw882xx, AW882XX_HAGCCFG4_REG, &reg_value);
 	if(real_value >= aw882xx->cur_gain) {
-		/* cal real value */
-		aw882xx_i2c_read(aw882xx, AW882XX_HAGCCFG4_REG, &reg_value);
 		real_value = (real_value << 8) | (reg_value & 0x00ff);
-		/* write value */
-		aw882xx_i2c_write(aw882xx, AW882XX_HAGCCFG4_REG, real_value);
+	} else {
+		real_value = (aw882xx->cur_gain << 8) | (reg_value & 0x00ff);
 	}
+	/* write value */
+	aw882xx_i2c_write(aw882xx, AW882XX_HAGCCFG4_REG, real_value);
+	pr_debug("%s: set to value = 0x%x\n", __func__, real_value);
 }
 
 static void aw882xx_fade_in_out(struct aw882xx *aw882xx)
