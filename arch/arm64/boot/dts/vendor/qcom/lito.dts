@@ -6,4 +6,5 @@
 	model = "Qualcomm Technologies, Inc. Lito SoC";
 	compatible = "qcom,lito";
 	qcom,board-id = <0 0>;
+	channel-id-map = [00];
 };

@@ -414,11 +414,11 @@
 		L16A: pm8150_l16: regulator-pm8150-l16 {
 			regulator-name = "pm8150_l16";
 			qcom,set = <RPMH_REGULATOR_SET_ALL>;
-			regulator-min-microvolt = <3000000>;
+			regulator-min-microvolt = <2600000>;
 			regulator-max-microvolt = <3304000>;
 			qcom,proxy-consumer-enable;
 			qcom,proxy-consumer-current = <857000>;
-			qcom,init-voltage = <3000000>;
+			qcom,init-voltage = <2600000>;
 			qcom,init-mode = <RPMH_REGULATOR_MODE_LPM>;
 		};
 	};
@@ -579,8 +579,7 @@
 			qcom,proxy-consumer-enable;
 			qcom,proxy-consumer-current = <62000>;
 			qcom,init-voltage = <1800000>;
-			//qcom,init-mode = <RPMH_REGULATOR_MODE_LPM>;
-			qcom,init-mode = <RPMH_REGULATOR_MODE_HPM>;
+			qcom,init-mode = <RPMH_REGULATOR_MODE_LPM>;
 		};
 	};
 
@@ -614,7 +613,7 @@
 			regulator-name = "pm8150a_l3";
 			qcom,set = <RPMH_REGULATOR_SET_ALL>;
 			regulator-min-microvolt = <1136000>;
-			regulator-max-microvolt = <1304000>;
+			regulator-max-microvolt = <1264000>;
 			qcom,init-voltage = <1136000>;
 			qcom,init-mode = <RPMH_REGULATOR_MODE_LPM>;
 		};
