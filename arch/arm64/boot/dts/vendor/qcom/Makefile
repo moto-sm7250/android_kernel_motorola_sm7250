@@ -44,7 +44,7 @@ dtb-$(CONFIG_ARCH_KONA) += kona-rumi.dtb \
 	kona-v2.1-xrfusion.dtb
 endif
 
-ifeq ($(CONFIG_BUILD_ARM64_DT_OVERLAY_NOT_OEM),y)
+ifeq ($(CONFIG_BUILD_ARM64_DT_OVERLAY),y)
 dtbo-$(CONFIG_ARCH_LITO) += lito-rumi-overlay.dtbo \
                 lito-mtp-overlay.dtbo \
                 lito-v2-mtp-overlay.dtbo \
@@ -66,20 +66,6 @@ lito-v2-atp-overlay.dtbo-base := lito-v2.dtb
 lito-v2-atp-lcd-overlay.dtbo-base := lito-v2.dtb
 lito-qrd-overlay.dtbo-base := lito.dtb
 lito-v2-qrd-overlay.dtbo-base := lito-v2.dtb
-
-else
-ifeq ($(CONFIG_BUILD_ARM64_DT_OVERLAY),y)
-        dtbo-$(CONFIG_ARCH_LITO) += \
-                avicii-overlay-dvt.dtbo \
-                avicii-overlay-dvt-v2.1.dtbo \
-                avicii-overlay-pvt.dtbo \
-                avicii-overlay-pvt-v2.1.dtbo
-
-avicii-overlay-dvt.dtbo-base := lito.dtb
-avicii-overlay-dvt-v2.1.dtbo-base := lito.dtb
-avicii-overlay-pvt.dtbo-base := lito.dtb
-avicii-overlay-pvt-v2.1.dtbo-base := lito.dtb
-
 else
 dtb-$(CONFIG_ARCH_LITO) += lito-rumi.dtb \
                 lito-mtp.dtb \
@@ -91,7 +77,6 @@ dtb-$(CONFIG_ARCH_LITO) += lito-rumi.dtb \
                 lito-v2-atp.dtb \
                 lito-v2-atp-lcd.dtb \
                 lito-v2-qrd.dtb
-endif
 endif
 
 ifeq ($(CONFIG_BUILD_ARM64_DT_OVERLAY),y)
