@@ -15,6 +15,10 @@ ifeq ($(CONFIG_ARCH_KONA), y)
 include $(srctree)/techpack/audio/config/konaauto.conf
 export $(shell sed 's/=.*//' $(srctree)/techpack/audio/config/konaauto.conf)
 endif
+ifeq ($(CONFIG_ARCH_LITO), y)
+include $(srctree)/techpack/audio/config/litoauto.conf
+export $(shell sed 's/=.*//' $(srctree)/techpack/audio/config/litoauto.conf)
+endif
 
 # Use USERINCLUDE when you must reference the UAPI directories only.
 USERINCLUDE     += \
@@ -42,6 +46,18 @@ endif
 ifeq ($(CONFIG_ARCH_KONA), y)
 LINUXINCLUDE    += \
                 -include $(srctree)/techpack/audio/config/konaautoconf.h
+endif
+ifeq ($(CONFIG_ARCH_LITO), y)
+LINUXINCLUDE    += \
+                -include $(srctree)/techpack/audio/config/litoautoconf.h
+endif
+ifeq ($(CONFIG_NAIRO_DTB), y)
+LINUXINCLUDE    += \
+                -include $(srctree)/techpack/audio/config/litonairo_asoc.h
+endif
+ifeq ($(CONFIG_SMITH_DTB), y)
+LINUXINCLUDE    += \
+                -include $(srctree)/techpack/audio/config/litosmith.h
 endif
 
 obj-y += soc/
