@@ -236,4 +236,6 @@ source "drivers/energy_model/Kconfig"
 source "drivers/mmi_annotate/Kconfig"
 
 source "drivers/mmi_info/Kconfig"
+
+source "drivers/moto_f_usbnet/Kconfig"
 endmenu
