@@ -1104,5 +1104,10 @@ config REGULATOR_PM8008
 	  This driver controls PM8008 PMIC chip and the voltage
 	  regulators found in Qualcomm Technologies Inc. PM8008
 	  PMIC.
-endif
 
+source "drivers/regulator/slg51000/Kconfig"
+
+source "drivers/regulator/slg5bm43670/Kconfig"
+
+source "drivers/regulator/wl2864c/Kconfig"
+endif
