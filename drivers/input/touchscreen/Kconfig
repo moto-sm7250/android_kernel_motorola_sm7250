@@ -1337,6 +1337,20 @@ config TOUCHSCREEN_SYNAPTICS_DSX
 
 source "drivers/input/touchscreen/synaptics_dsx/Kconfig"
 
+config TOUCHSCREEN_SYNAPTICS_DSX_MMI
+	bool "Synaptics DSX MMI Touchscreen Driver"
+	depends on I2C
+	default n
+	help
+	  Say Y here if you have a Moto Synaptics Touchscreen.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called synaptics_mmi.
+
+source "drivers/input/touchscreen/synaptics_mmi_class/Kconfig"
+
 config TOUCHSCREEN_SYNAPTICS_TCM
 	bool "Synaptics TCM Touchscreen Driver"
 	depends on I2C
@@ -1351,6 +1365,42 @@ config TOUCHSCREEN_SYNAPTICS_TCM
 
 source "drivers/input/touchscreen/synaptics_tcm/Kconfig"
 
+config TOUCHSCREEN_SYNAPTICS_TCM_MMI
+	bool "Synaptics TCM MMI Touchscreen Driver"
+	depends on I2C
+	default n
+	help
+	  Say Y here if you have a Moto Synaptics Touchscreen.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called synaptics_tcm_mmi.
+
+source "drivers/input/touchscreen/synaptics_tcm_mmi_v2/Kconfig"
+
+config TOUCHSCREEN_HIMAX_CHIPSET
+	bool "Himax touchpanel CHIPSET"
+	depends on SPI_MASTER
+	help
+	  Say Y here if you have a Himax CHIPSET touchscreen.
+	  HIMAX controllers are multi touch controllers which can
+	  report 10 touches at a time.
+
+	  If unsure, say N.
+
+source "drivers/input/touchscreen/himax_0flash_mmi/Kconfig"
+
 source "drivers/input/touchscreen/focaltech_touch/Kconfig"
+
+source "drivers/input/touchscreen/focaltech_0flash_mmi/Kconfig"
+
+source "drivers/input/touchscreen/goodix_gtx8_v1430_mmi/Kconfig"
+
+source "drivers/input/touchscreen/nova_0flash_mmi/Kconfig"
+
+source "drivers/input/touchscreen/touchscreen_mmi/Kconfig"
+
+source "drivers/input/touchscreen/sec_mmi/Kconfig"
 
 endif
