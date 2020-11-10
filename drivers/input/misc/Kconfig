@@ -883,4 +883,24 @@ config INPUT_MMI_KEY_SWAP
 	  To compile this driver as a module, choose M here: the
 	  module will be called key_swap.
 
+config INPUT_QPNP_POWER_ON_MMI
+	tristate "Moto QPNP PMIC Power-on support"
+	depends on SPMI
+	help
+	  This option enables device driver support for the power-on
+	  functionality of Qualcomm Technologies, Inc. PNP PMICs.  It supports
+	  reporting the change in status of the KPDPWR_N line (connected to the
+	  power-key) as well as reset features.
+
+config INPUT_STMVL53L1
+	tristate "STMVL53L1 support"
+	help
+	  Say Y here if you wish to include support for laser sensor driver.
+
+config INPUT_MISC_TOF_USE_VL53L3
+	bool "STMVL53L3 support"
+	depends on INPUT_STMVL53L1
+	help
+	  Say Y here if you wish to include support for VL53L3 laser sensor driver.
+
 endif

@@ -85,3 +85,5 @@ obj-$(CONFIG_INPUT_XEN_KBDDEV_FRONTEND)	+= xen-kbdfront.o
 obj-$(CONFIG_INPUT_YEALINK)		+= yealink.o
 obj-$(CONFIG_INPUT_MMI_KEY_SWAP)	+= key_swap.o
 obj-$(CONFIG_INPUT_IDEAPAD_SLIDEBAR)	+= ideapad_slidebar.o
+obj-$(CONFIG_INPUT_QPNP_POWER_ON_MMI)	+= qpnp-power-on-mmi.o
+obj-$(CONFIG_INPUT_STMVL53L1)	+= vl53L1/
