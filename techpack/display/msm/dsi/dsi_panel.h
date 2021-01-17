@@ -335,6 +335,8 @@ struct dsi_panel {
 	u32 fod_dim_lut_count;
 	
 	bool hbm_state;
+	bool acl_state;
+	bool cabc_state;
 };
 
 bool dsi_display_all_displays_dead(void);
