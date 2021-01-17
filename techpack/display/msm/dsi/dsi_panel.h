@@ -333,6 +333,8 @@ struct dsi_panel {
 
 	struct brightness_alpha_pair *fod_dim_lut;
 	u32 fod_dim_lut_count;
+	
+	bool hbm_state;
 };
 
 bool dsi_display_all_displays_dead(void);
@@ -464,6 +466,7 @@ int dsi_panel_set_param(struct dsi_panel *panel,
 			struct msm_param_info *param_info);
 
 void dsi_panel_reset_param(struct dsi_panel *panel);
+void dsi_panel_set_custom_param(struct dsi_panel *panel);
 
 int dsi_panel_get_elvss_data(struct dsi_panel *panel);
 int dsi_panel_get_elvss_data_1(struct dsi_panel *panel);
