@@ -10480,8 +10480,8 @@
 
 		__overlay__ {
 			compatible = "mmi,utags";
-			mmi,main-utags = "/dev/block/bootdevice/by-name/utags";
-			mmi,backup-utags = "/dev/block/bootdevice/by-name/utagsBackup";
+			mmi,main-utags = "/dev/disk/by-partlabel/utags";
+			mmi,backup-utags = "/dev/disk/by-partlabel/utagsBackup";
 		};
 	};
 
@@ -10491,7 +10491,7 @@
 		__overlay__ {
 			compatible = "mmi,utags";
 			mmi,dir-name = "hw";
-			mmi,main-utags = "/dev/block/bootdevice/by-name/hw";
+			mmi,main-utags = "/dev/disk/by-partlabel/hw";
 		};
 	};
 
