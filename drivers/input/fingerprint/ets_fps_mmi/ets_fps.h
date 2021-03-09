@@ -25,7 +25,7 @@
 #include <linux/module.h>
 #include <linux/spi/spi.h>
 #include <linux/version.h>
-
+#include <linux/mmi_wake_lock.h>
 
 #ifdef FP_SPI_DEBUG
 #define DEBUG_PRINT(fmt, args...) pr_err(fmt, ## args)
@@ -74,9 +74,16 @@
 #define INT_TRIGGER_ABORT			0xa8
 #define FP_TRANSFER_SYNC			0xAA
 
-#ifdef CONFIG_DISPLAY_SPEED_UP
-#define SET_AUTH_STATUS				0xD1
+#ifdef CONFIG_EGIS_DISPLAY_SPEED_UP
+#define NOTIFY_AUTH_STATUS			0xD1
+
+#define AUTH_STATUS_NONE   0
+#define AUTH_STATUS_READY  1
+#define AUTH_STATUS_FINGER_DETECTED  2
+#define AUTH_STATUS_CAPTURED  3
 #endif
+
+#define GET_DISP_PANEL_STATUS		0xD2
 
 #define DRDY_IRQ_ENABLE				1
 #define DRDY_IRQ_DISABLE			0

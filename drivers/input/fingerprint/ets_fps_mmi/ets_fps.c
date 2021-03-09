@@ -20,6 +20,7 @@
 *
 */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/interrupt.h>
 #ifdef CONFIG_OF
@@ -50,6 +51,8 @@
 #include <linux/pm_wakeup.h>
 #endif
 
+#include <linux/version.h>
+
 #include "ets_fps.h"
 #include "ets_navi_input.h"
 
@@ -65,7 +68,7 @@
 #ifdef CONFIG_HAS_WAKELOCK
 static struct wake_lock ets_wake_lock;
 #else
-static struct wakeup_source ets_wake_lock;
+static struct wakeup_source *ets_wake_lock;
 #endif
 /*
  * FPS interrupt table
@@ -244,7 +247,7 @@ void interrupt_timer_routine(unsigned long _data)
 }
 #endif
 
-#ifdef CONFIG_DISPLAY_SPEED_UP
+#ifdef CONFIG_EGIS_DISPLAY_SPEED_UP
 extern void ext_dsi_display_early_power_on(void);
 static bool is_auth_ready = false;
 #endif
@@ -258,13 +261,12 @@ static irqreturn_t fp_eint_func(int irq, void *dev_id)
 #ifdef CONFIG_HAS_WAKELOCK
 	wake_lock_timeout(&ets_wake_lock, msecs_to_jiffies(1500));
 #else
-	__pm_wakeup_event(&ets_wake_lock, 1500);
+	PM_WAKEUP_EVENT(ets_wake_lock, 1500);
 #endif
-#ifdef CONFIG_DISPLAY_SPEED_UP
-	if (is_auth_ready) {
-		pr_info("etspi: call ext_dsi_display_early_power_on()");
-		ext_dsi_display_early_power_on();
-	} else
+#ifdef CONFIG_EGIS_DISPLAY_SPEED_UP
+	if (is_auth_ready)
+		pr_info("etspi: already in authentication mode");
+	else
 		pr_info("etspi: not in authentication mode");
 #endif
 	return IRQ_HANDLED;
@@ -282,7 +284,7 @@ static irqreturn_t fp_eint_func_ll(int irq, void *dev_id)
 #ifdef CONFIG_HAS_WAKELOCK
 	wake_lock_timeout(&ets_wake_lock, msecs_to_jiffies(1500));
 #else
-	__pm_wakeup_event(&ets_wake_lock, 1500);
+	PM_WAKEUP_EVENT(ets_wake_lock, 1500);
 #endif
 	return IRQ_RETVAL(IRQ_HANDLED);
 }
@@ -492,6 +494,9 @@ static struct attribute *attributes[] = {
 static const struct attribute_group attribute_group = {
 	.attrs = attributes,
 };
+
+static int disp_panel_on = -1;  /* -1 for invalid, 0 for display-off, 1 for display-on */
+
 static long etspi_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 
@@ -528,13 +533,25 @@ static long etspi_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		DEBUG_PRINT("etspi:fp_ioctl <<< fp Trigger function abort\n");
 		fps_interrupt_abort();
 		goto done;
-#ifdef CONFIG_DISPLAY_SPEED_UP
-	case SET_AUTH_STATUS:
-		pr_info("etspi: - set auth status: %lu", arg);
-		if (arg) is_auth_ready = true;
-		else is_auth_ready = false;
+#ifdef CONFIG_EGIS_DISPLAY_SPEED_UP
+	case NOTIFY_AUTH_STATUS:
+		pr_info("etspi: - notify auth status: %lu", arg);
+		if (arg == AUTH_STATUS_NONE)
+			is_auth_ready = false;
+		else if (arg == AUTH_STATUS_READY)
+			is_auth_ready = true;
+		else if (arg == AUTH_STATUS_FINGER_DETECTED) {
+			if (is_auth_ready) {
+				pr_info("etspi: call ext_dsi_display_early_power_on()");
+				ext_dsi_display_early_power_on();
+			}
+		}
 		goto done;
 #endif
+	case GET_DISP_PANEL_STATUS:
+		if (copy_to_user((int __user *) arg, &disp_panel_on, sizeof(disp_panel_on)))
+			pr_err("%s fail to copy", __func__);
+		goto done;
 	default:
 	retval = -ENOTTY;
 	break;
@@ -968,7 +985,7 @@ static int etspi_remove(struct platform_device *pdev)
 #ifdef CONFIG_HAS_WAKELOCK
 	wake_lock_destroy(&ets_wake_lock);
 #else
-	wakeup_source_trash(&ets_wake_lock);
+	PM_WAKEUP_UNREGISTER(ets_wake_lock);
 #endif
 	del_timer_sync(&fps_ints.timer);
 	etspi_create_device(etspi, false);
@@ -1050,7 +1067,12 @@ static int etspi_probe(struct platform_device *pdev)
 #ifdef CONFIG_HAS_WAKELOCK
 	wake_lock_init(&ets_wake_lock, WAKE_LOCK_SUSPEND, "ets_wake_lock");
 #else
-	wakeup_source_init(&ets_wake_lock, "ets_wake_lock");
+	PM_WAKEUP_REGISTER(dev, ets_wake_lock, "ets_wake_lock");
+        if (!ets_wake_lock) {
+		pr_err("%s : failed to allocate wakeup source\n", __func__);
+		status = -ENOMEM;
+		goto etspi_register_wake_lock_failed;
+	}
 #endif
 	DEBUG_PRINT("  add_timer ---- \n");
 	DEBUG_PRINT("%s : initialize success %d\n",
@@ -1076,7 +1098,10 @@ etspi_create_group_failed:
 #ifdef CONFIG_HAS_WAKELOCK
 	wake_lock_destroy(&ets_wake_lock);
 #else
-	wakeup_source_trash(&ets_wake_lock);
+	PM_WAKEUP_UNREGISTER(ets_wake_lock);
+#endif
+#ifndef CONFIG_HAS_WAKELOCK
+etspi_register_wake_lock_failed:
 #endif
 	del_timer_sync(&fps_ints.timer);
 	etspi_create_device(etspi, false);
@@ -1087,6 +1112,23 @@ etspi_probe_parse_dt_failed:
 	pr_err("%s is failed\n", __func__);
 	return status;
 }
+
+#ifdef CONFIG_PANEL_NOTIFICATIONS
+#include <linux/panel_notifier.h>
+static struct notifier_block nb;
+
+static int panel_notifier_cb(struct notifier_block *nb, unsigned long action, void *data)
+{
+	if (action == PANEL_EVENT_DISPLAY_ON) {
+		disp_panel_on = 1;
+		pr_info("%s display panel is on", __func__);
+	} else if (action == PANEL_EVENT_DISPLAY_OFF) {
+		disp_panel_on = 0;
+		pr_info("%s display panel is off", __func__);
+	}
+	return 0;
+}
+#endif
 
 static int __init ets_init(void)
 {
@@ -1121,11 +1163,19 @@ static int __init ets_init(void)
 	status = platform_driver_register(&etspi_driver);
 	DEBUG_PRINT("%s  done\n", __func__);
 
+#ifdef CONFIG_PANEL_NOTIFICATIONS
+	nb.notifier_call = panel_notifier_cb;
+	if (panel_register_notifier(&nb))
+		pr_warn("%s fail to register display panel notifier", __func__);
+#endif
 	return status;
 }
 
 static void __exit ets_exit(void)
 {
+#ifdef CONFIG_PANEL_NOTIFICATIONS
+	panel_unregister_notifier(&nb);
+#endif
 	platform_driver_unregister(&etspi_driver);
 }
 
