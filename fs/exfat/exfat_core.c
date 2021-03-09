@@ -1753,13 +1753,25 @@ void fs_sync(struct super_block *sb, s32 do_sync)
 
 void fs_error(struct super_block *sb)
 {
-	struct exfat_mount_options *opts = &EXFAT_SB(sb)->options;
-	struct exfat_sb_info *sbi = EXFAT_SB(sb);
+	struct exfat_mount_options *opts;
+	struct exfat_sb_info *sbi;
+	if ( sb == NULL || EXFAT_SB(sb)== NULL) {
+		printk(KERN_ERR "[EXFAT] filesystem maybe unmounted!!!\n");
+		return;
+	}
+	opts = &EXFAT_SB(sb)->options;
+	sbi = EXFAT_SB(sb);
 
 	if (opts->errors == EXFAT_ERRORS_PANIC)
 		panic("[EXFAT] Filesystem panic from previous error\n");
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(4,19,0)
 	else if ((opts->errors == EXFAT_ERRORS_RO) && !(sb->s_flags & MS_RDONLY)) {
 		sb->s_flags |= MS_RDONLY;
+#else
+         else if ((opts->errors == EXFAT_ERRORS_RO) && !(sb->s_flags & SB_RDONLY)) {
+                 sb->s_flags |= SB_RDONLY;
+#endif
+
 		if (sbi && !sbi->disable_uevent)
 			schedule_work(&sbi->uevent_work);
 		printk(KERN_ERR "[EXFAT] Filesystem has been set read-only\n");
