@@ -17,6 +17,7 @@
 #include <linux/debugfs.h>
 #include <linux/kallsyms.h>
 #include <soc/qcom/watchdog.h>
+#include <linux/version.h>
 
 static struct dentry *dbgfs_fire_softlockup;
 static struct dentry *dbgfs_fire_watchdog;
@@ -71,9 +72,19 @@ static int watchdog_test_init(void)
 	dbgfs_fire_watchdog = debugfs_create_file("fire_watchdog_reset",
 		0200, NULL, NULL, &fire_watchdog_reset_fops);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,4,0)
 	trigger_wdog_bite = (void *)kallsyms_lookup_name("msm_trigger_wdog_bite");
+#else
+#if defined(CONFIG_QCOM_WATCHDOG_V2)
+	trigger_wdog_bite = msm_trigger_wdog_bite;
+#elif defined(CONFIG_QCOM_WDT_CORE)
+	trigger_wdog_bite = qcom_wdt_trigger_bite;
+#else
+	trigger_wdog_bite = NULL;
+#endif
+#endif
 	if (!trigger_wdog_bite)
-		printk(KERN_ERR "Failed to get msm_trigger_wdog_bite address\n");
+		printk(KERN_ERR "Failed to get trigger_wdog_bite address\n");
 	return 0;
 }
 
