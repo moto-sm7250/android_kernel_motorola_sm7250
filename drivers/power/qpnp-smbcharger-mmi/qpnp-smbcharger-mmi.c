@@ -27,6 +27,7 @@
 #include <linux/debugfs.h>
 #include <linux/string.h>
 #include <linux/version.h>
+#include <linux/mmi_wake_lock.h>
 
 #define MODULE_LOG "SMBMMI"
 
@@ -176,9 +177,8 @@ enum {
 
 #define HEARTBEAT_DELAY_MS 5000
 #define HEARTBEAT_DUAL_DELAY_MS 10000
-#define HEARTBEAT_DUAL_DELAY_OCP_MS 750
-#define HEARTBEAT_OCP_SETTLE_CNT 10
-#define MAX_ALLOWED_OCP 10
+#define HEARTBEAT_DUAL_DELAY_OCP_MS 1000
+#define HEARTBEAT_OCP_SETTLE_CNT 7
 #define HEARTBEAT_FACTORY_MS 1000
 #define HEARTBEAT_DISCHARGE_MS 60000
 
@@ -398,6 +398,7 @@ struct smb_mmi_charger {
 	int			hvdcp_power_max;
 	int			inc_hvdcp_cnt;
 	int			hb_startup_cnt;
+	bool		ocp_flag;
 };
 
 #define CHGR_FAST_CHARGE_CURRENT_CFG_REG	(CHGR_BASE + 0x61)
@@ -1908,6 +1909,8 @@ static int mmi_increase_vbus_power(struct smb_mmi_charger *chg, int cur_mv)
 	int rc = -EINVAL;
 	union power_supply_propval val = {0, };
 	int pulse_cnt;
+	bool usb_present = false;
+	union power_supply_propval charger_val = {0, };
 
 	rc = power_supply_get_property(chg->qcom_psy,
 			POWER_SUPPLY_PROP_DP_DM, &val);
@@ -1920,8 +1923,9 @@ static int mmi_increase_vbus_power(struct smb_mmi_charger *chg, int cur_mv)
 	}
 
 	/* Maintain vbus voltage for QC3.0 power/3A charging */
-	if (pulse_cnt == 0) {
+	if (pulse_cnt == 0 || chg->inc_hvdcp_cnt != HVDCP_PULSE_COUNT_MAX) {
 
+		chg->inc_hvdcp_cnt = HVDCP_PULSE_COUNT_MAX;
 		vote(chg->chg_dis_votable, MMI_HB_VOTER, true, 0);
 
 		while (cur_mv < HVDCP_VOLTAGE_NOM && pulse_cnt < chg->inc_hvdcp_cnt) {
@@ -1951,6 +1955,17 @@ static int mmi_increase_vbus_power(struct smb_mmi_charger *chg, int cur_mv)
 				pulse_cnt = val.intval;
 			}
 
+			rc = get_prop_usb_present(chg,&charger_val);
+			if (rc < 0){
+				mmi_err(chg, "Couldn't read usb_present rc=%d\n", rc);
+			}else
+				usb_present = charger_val.intval;
+
+			if(cur_mv <= 3000 && usb_present == false ){
+				mmi_err(chg, "%s, charger detect error, exit increase voltage\n", __func__);
+				break;
+			}
+
 			mmi_info(chg, "pulse count = %d, cur_mv = %d\n", pulse_cnt, cur_mv);
 		}
 
@@ -1965,6 +1980,72 @@ static int mmi_increase_vbus_power(struct smb_mmi_charger *chg, int cur_mv)
 
 	return cur_mv;
 }
+
+static ssize_t force_hvdcp_power_max_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	unsigned long r;
+	unsigned long power;
+	struct platform_device *pdev = to_platform_device(dev);
+	struct smb_mmi_charger *mmi_chip = platform_get_drvdata(pdev);
+
+	r = kstrtoul(buf, 0, &power);
+	if (r) {
+		pr_err("SMBMMI: Invalid hvdcp_power_max value = %lu\n", power);
+		return -EINVAL;
+	}
+
+	if (!mmi_chip) {
+		pr_err("SMBMMI: chip not valid\n");
+		return -ENODEV;
+	}
+
+	if ((power >= CHARGER_POWER_15W) &&
+	    (power <= CHARGER_POWER_20W) &&
+	    (mmi_chip->hvdcp_power_max != power)) {
+		mmi_chip->hvdcp_power_max = power;
+
+		r = smblib_masked_write_mmi(mmi_chip, HVDCP_PULSE_COUNT_MAX_REG,
+					    HVDCP_PULSE_COUNT_MAX_QC2_MASK |
+					    HVDCP_PULSE_COUNT_MAX_QC3_MASK,
+					    HVDCP_PULSE_COUNT_MAX);
+		if (r < 0) {
+			mmi_err(mmi_chip, "Could not set HVDCP pulse count max\n");
+			return r;
+		}
+		cancel_delayed_work(&mmi_chip->heartbeat_work);
+		schedule_delayed_work(&mmi_chip->heartbeat_work,
+					      msecs_to_jiffies(100));
+		mmi_info(mmi_chip, "Reset hvdcp power max as %d, "
+					"Reschedule heartbeat\n",
+					mmi_chip->hvdcp_power_max);
+	}
+
+	return r ? r : count;
+}
+
+static ssize_t force_hvdcp_power_max_show(struct device *dev,
+				    struct device_attribute *attr,
+				    char *buf)
+{
+	int power;
+	struct platform_device *pdev = to_platform_device(dev);
+	struct smb_mmi_charger *mmi_chip = platform_get_drvdata(pdev);
+
+	if (!mmi_chip) {
+		pr_err("SMBMMI: chip not valid\n");
+		return -ENODEV;
+	}
+
+	power = mmi_chip->hvdcp_power_max;
+
+	return scnprintf(buf, CHG_SHOW_MAX_SIZE, "%d\n", power);
+}
+
+static DEVICE_ATTR(force_hvdcp_power_max, 0644,
+		force_hvdcp_power_max_show,
+		force_hvdcp_power_max_store);
 
 static void mmi_chrg_usb_vin_config(struct smb_mmi_charger *chg, int cur_mv)
 {
@@ -2160,7 +2241,7 @@ end_rate_check:
 
 #define TAPER_COUNT 2
 #define TAPER_DROP_MA 100
-static bool mmi_has_current_tapered(struct smb_mmi_charger *chg,
+static bool mmi_has_current_tapered(int batt, struct smb_mmi_charger *chg,
 				    struct mmi_sm_params *chip,
 				    int batt_ma, int taper_ma)
 {
@@ -2179,8 +2260,16 @@ static bool mmi_has_current_tapered(struct smb_mmi_charger *chg,
 	else
 		target_ma = allowed_fcc - TAPER_DROP_MA;
 
-	if (batt_ma < 0) {
+	if (batt == BASE_BATT)
 		batt_ma *= -1;
+
+	if (batt_ma < 0) {
+		if (chip->chrg_taper_cnt >= TAPER_COUNT) {
+			change_state = true;
+			chip->chrg_taper_cnt = 0;
+		} else
+			chip->chrg_taper_cnt++;
+	} else {
 		if (batt_ma <= target_ma)
 			if (chip->chrg_taper_cnt >= TAPER_COUNT) {
 				change_state = true;
@@ -2189,12 +2278,6 @@ static bool mmi_has_current_tapered(struct smb_mmi_charger *chg,
 				chip->chrg_taper_cnt++;
 		else
 			chip->chrg_taper_cnt = 0;
-	} else {
-		if (chip->chrg_taper_cnt >= TAPER_COUNT) {
-			change_state = true;
-			chip->chrg_taper_cnt = 0;
-		} else
-			chip->chrg_taper_cnt++;
 	}
 
 	return change_state;
@@ -2248,7 +2331,7 @@ static enum alarmtimer_restart mmi_heartbeat_alarm_cb(struct alarm *alarm,
 
 	mmi_dbg(chip, "HB alarm fired\n");
 
-	__pm_stay_awake(chip->smb_mmi_hb_wake_source);
+	PM_STAY_AWAKE(chip->smb_mmi_hb_wake_source);
 	cancel_delayed_work(&chip->heartbeat_work);
 	/* Delay by 500 ms to allow devices to resume. */
 	schedule_delayed_work(&chip->heartbeat_work,
@@ -2316,7 +2399,7 @@ static int mmi_dual_charge_sm(struct smb_mmi_charger *chg,
 			chip->pres_chrg_step = STEP_MAX;
 		} else if (!zone->fcc_norm_ma)
 			chip->pres_chrg_step = STEP_FLOAT;
-		else if (mmi_has_current_tapered(chg, chip, stat->batt_ma,
+		else if (mmi_has_current_tapered(batt, chg, chip, stat->batt_ma,
 						 zone->fcc_norm_ma)) {
 			chip->chrg_taper_cnt = 0;
 			for (i = 0; i < MAX_NUM_STEPS; i++)
@@ -2330,7 +2413,7 @@ static int mmi_dual_charge_sm(struct smb_mmi_charger *chg,
 			 (stat->batt_mv + fv_offset) < max_fv_mv) {
 			chip->chrg_taper_cnt = 0;
 			chip->pres_chrg_step = STEP_NORM;
-		} else if (mmi_has_current_tapered(chg, chip, stat->batt_ma,
+		} else if (mmi_has_current_tapered(batt, chg, chip, stat->batt_ma,
 						   chip->chrg_iterm)) {
 				chip->pres_chrg_step = STEP_FULL;
 		}
@@ -2415,6 +2498,8 @@ static int mmi_dual_charge_sm(struct smb_mmi_charger *chg,
 			stepchg_str[(int)chip->pres_chrg_step],
 			chip->pres_temp_zone,
 			chip->batt_health);
+		chg->hb_startup_cnt = HEARTBEAT_OCP_SETTLE_CNT;
+		chg->ocp_flag = true;	// 1x settle per state chng
 		return 1;
 	} else {
 		mmi_dbg(chg, "Batt %d: batt_mv = %d, batt_ma %d, batt_soc %d,"
@@ -2445,7 +2530,7 @@ static int mmi_dual_charge_control(struct smb_mmi_charger *chg,
 	int target_fv;
 	int effective_fv;
 	int effective_fcc;
-	int scaled_fcc;
+	int scaled_fcc =0;
 	int ocp;
 	int sm_update;
 	bool voltage_full;
@@ -2534,16 +2619,20 @@ static int mmi_dual_charge_control(struct smb_mmi_charger *chg,
 	effective_fv = get_effective_result(chg->fv_votable) / 1000;
 	effective_fcc = get_effective_result(chg->fcc_votable);
 
-	if (chg->hb_startup_cnt) {
+	/* OCP Check - Scale down fcc if too high for initial set */
+	if (chg->hb_startup_cnt > 1) {
 		chg->hb_startup_cnt--;
 		sched_time = HEARTBEAT_DUAL_DELAY_OCP_MS;
-	}
-	else if (effective_fcc >= (main_p->target_fcc + flip_p->target_fcc) *1000 ) {
+	} else if ( (effective_fcc >= (main_p->target_fcc + flip_p->target_fcc) *1000) &&
+			(chg->ocp_flag) ) {
+		chg->ocp_flag = false;
 		sched_time = HEARTBEAT_DUAL_DELAY_OCP_MS;
-		scaled_fcc = effective_fcc * 40/100;	//scale chrg curr to avoid overshoot
-		effective_fcc -= scaled_fcc;
-		mmi_dbg(chg, "fccScaled: %d, NewFCC: %d\n", scaled_fcc, effective_fcc);
 		chg->hb_startup_cnt = HEARTBEAT_OCP_SETTLE_CNT;
+		scaled_fcc = effective_fcc /10;
+		effective_fcc -= scaled_fcc;
+		mmi_dbg(chg, "fccScaled: %d, AdjFCC: %d\n", scaled_fcc, effective_fcc);
+		main_p->ocp[main_p->pres_temp_zone] =0;
+		flip_p->ocp[flip_p->pres_temp_zone] =0;
 	}
 
 	/* Check for Charge None */
@@ -2562,7 +2651,7 @@ static int mmi_dual_charge_control(struct smb_mmi_charger *chg,
 
 		voltage_full = ((chg->demo_mode_usb_suspend == false) &&
 		    ((stat->batt_mv + HYST_STEP_MV) >= DEMO_MODE_VOLTAGE)
-		    && mmi_has_current_tapered(chg, main_p, stat->batt_ma,
+		    && mmi_has_current_tapered(MAIN_BATT, chg, main_p, stat->batt_ma,
 					       (main_p->chrg_iterm * 2)));
 
 		if ((chg->demo_mode_usb_suspend == false) &&
@@ -2616,6 +2705,7 @@ static int mmi_dual_charge_control(struct smb_mmi_charger *chg,
 		target_fcc = flip_p->target_fcc;
 		target_fv = flip_p->target_fv;
 		mmi_info(chg, "Align Flip to Main FULL\n");
+		sched_time = HEARTBEAT_DUAL_DELAY_MS;
 		goto vote_now;
 	} else if ((flip_p->pres_chrg_step == STEP_FULL) &&
 		   ((main_p->pres_chrg_step == STEP_MAX) ||
@@ -2628,6 +2718,7 @@ static int mmi_dual_charge_control(struct smb_mmi_charger *chg,
 		target_fcc = main_p->target_fcc;
 		target_fv = main_p->target_fv;
 		mmi_info(chg, "Align Main to Flip FULL\n");
+		sched_time = HEARTBEAT_DUAL_DELAY_MS;
 		goto vote_now;
 	/* Check for Charge Disable from each */
 	} else if ((main_p->target_fcc < 0) ||
@@ -2645,15 +2736,16 @@ static int mmi_dual_charge_control(struct smb_mmi_charger *chg,
 	else
 		target_fv = flip_p->target_fv;
 
-	if (chg_stat_main.batt_ma > main_p->target_fcc) {
+	if ((chg_stat_main.batt_ma > main_p->target_fcc) &&
+		 chg->hb_startup_cnt %2) { //Allow settle time
 		sched_time = HEARTBEAT_DUAL_DELAY_OCP_MS;
 		ocp = chg_stat_main.batt_ma - main_p->target_fcc;
 		main_p->ocp[main_p->pres_temp_zone] += ocp;
 		mmi_info(chg, "Main Exceed by %d mA\n",
 			main_p->ocp[main_p->pres_temp_zone]);
 	}
-
-	if (chg_stat_flip.batt_ma > flip_p->target_fcc) {
+	if ((chg_stat_flip.batt_ma > flip_p->target_fcc) &&
+		 chg->hb_startup_cnt %2) { //Allow settle time
 		sched_time = HEARTBEAT_DUAL_DELAY_OCP_MS;
 		ocp = chg_stat_flip.batt_ma - flip_p->target_fcc;
 		flip_p->ocp[flip_p->pres_temp_zone] += ocp;
@@ -2662,13 +2754,19 @@ static int mmi_dual_charge_control(struct smb_mmi_charger *chg,
 	}
 
 	target_fcc = main_p->target_fcc + flip_p->target_fcc;
-	target_fcc -= scaled_fcc/1000;			// subtract out scaled fcc correction
+	target_fcc -= scaled_fcc/1000;
 	target_fcc -= main_p->ocp[main_p->pres_temp_zone];
 	target_fcc -= flip_p->ocp[flip_p->pres_temp_zone];
 	if ( (target_fcc < main_p->target_fcc) &&
-		(chg_stat_flip.batt_ma < flip_p->target_fcc) ) {
+		(chg_stat_flip.batt_ma < flip_p->target_fcc *7/10) ) {
 		mmi_info(chg, "Target FCC adjust too much\n");
-		target_fcc = main_p->target_fcc;
+		chg->hb_startup_cnt = HEARTBEAT_OCP_SETTLE_CNT;
+		if (main_p->target_fcc < flip_p->target_fcc)
+			target_fcc = (main_p->target_fcc)*5/2;
+		else
+			target_fcc = (flip_p->target_fcc)*5/2;
+		main_p->ocp[main_p->pres_temp_zone] =0;
+		flip_p->ocp[flip_p->pres_temp_zone] =0;
 	}
 
 	if (((main_p->pres_chrg_step == STEP_MAX) ||
@@ -2712,13 +2810,13 @@ vote_now:
 		mmi_info(chg, "IMPOSED: FV = %d, CDIS = %d, FCC = %d, USBICL = %d\n",
 			effective_fv,
 			get_effective_result(chg->chg_dis_votable),
-			effective_fcc,
+			target_fcc,
 			get_effective_result(chg->usb_icl_votable));
 	else
 		mmi_dbg(chg, "IMPOSED: FV = %d, CDIS = %d, FCC = %d, USBICL = %d\n",
 			effective_fv,
 			get_effective_result(chg->chg_dis_votable),
-			effective_fcc,
+			target_fcc,
 			get_effective_result(chg->usb_icl_votable));
 
 	return sched_time;
@@ -2780,7 +2878,7 @@ static void mmi_basic_charge_sm(struct smb_mmi_charger *chip,
 
 		voltage_full = ((chip->demo_mode_usb_suspend == false) &&
 		    ((stat->batt_mv + HYST_STEP_MV) >= DEMO_MODE_VOLTAGE)
-		    && mmi_has_current_tapered(chip, prm, stat->batt_ma,
+		    && mmi_has_current_tapered(BASE_BATT, chip, prm, stat->batt_ma,
 			prm->chrg_iterm));
 
 		if ((chip->demo_mode_usb_suspend == false) &&
@@ -2818,7 +2916,7 @@ static void mmi_basic_charge_sm(struct smb_mmi_charger *chip,
 			prm->pres_chrg_step = STEP_MAX;
 		} else if (!zone->fcc_norm_ma)
 			prm->pres_chrg_step = STEP_FLOAT;
-		else if (mmi_has_current_tapered(chip, prm, stat->batt_ma,
+		else if (mmi_has_current_tapered(BASE_BATT, chip, prm, stat->batt_ma,
 						 zone->fcc_norm_ma)) {
 			prm->chrg_taper_cnt = 0;
 
@@ -2838,7 +2936,7 @@ static void mmi_basic_charge_sm(struct smb_mmi_charger *chip,
 			 (stat->batt_mv + HYST_STEP_MV) < max_fv_mv) {
 			prm->chrg_taper_cnt = 0;
 			prm->pres_chrg_step = STEP_NORM;
-		} else if (mmi_has_current_tapered(chip, prm, stat->batt_ma,
+		} else if (mmi_has_current_tapered(BASE_BATT, chip, prm, stat->batt_ma,
 						   prm->chrg_iterm)) {
 				prm->pres_chrg_step = STEP_FULL;
 		}
@@ -2852,7 +2950,7 @@ static void mmi_basic_charge_sm(struct smb_mmi_charger *chip,
 		if ((zone->fcc_norm_ma) ||
 		    ((stat->batt_mv + HYST_STEP_MV) < zone->norm_mv))
 			prm->pres_chrg_step = STEP_MAX;
-		else if (mmi_has_current_tapered(chip, prm, stat->batt_ma,
+		else if (mmi_has_current_tapered(BASE_BATT, chip, prm, stat->batt_ma,
 						   prm->chrg_iterm))
 			prm->pres_chrg_step = STEP_STOP;
 	}
@@ -3417,7 +3515,7 @@ static void mmi_heartbeat_work(struct work_struct *work)
 			chip->factory_kill_armed = true;
 		} else if (chip->factory_kill_armed && !factory_kill_disable) {
 			mmi_warn(chip, "Factory kill power off\n");
-			orderly_poweroff(true);
+			kernel_power_off();
 		} else
 			chip->factory_kill_armed = false;
 	}
@@ -3452,7 +3550,7 @@ sch_hb:
 
 	kfree(chrg_rate_string);
 
-	__pm_relax(chip->smb_mmi_hb_wake_source);
+	PM_RELAX(chip->smb_mmi_hb_wake_source);
 }
 
 static int mmi_psy_notifier_call(struct notifier_block *nb, unsigned long val,
@@ -3591,6 +3689,7 @@ static enum power_supply_property batt_props[] = {
 	POWER_SUPPLY_PROP_CYCLE_COUNT,
 	POWER_SUPPLY_PROP_RECHARGE_SOC,
 	POWER_SUPPLY_PROP_CHARGE_FULL,
+	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
 	POWER_SUPPLY_PROP_FCC_STEPPER_ENABLE,
 	POWER_SUPPLY_PROP_HOT_TEMP,
 };
@@ -4124,6 +4223,7 @@ static int smb_mmi_probe(struct platform_device *pdev)
 	this_chip = chip;
 	device_init_wakeup(chip->dev, true);
 	chip->hb_startup_cnt = HEARTBEAT_OCP_SETTLE_CNT;
+	chip->ocp_flag = true;
 
 	smb_mmi_chg_config_init(chip);
 
@@ -4145,11 +4245,7 @@ static int smb_mmi_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&chip->heartbeat_work, mmi_heartbeat_work);
 	INIT_DELAYED_WORK(&chip->weakcharger_work, mmi_weakcharger_work);
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 110))
-	chip->smb_mmi_hb_wake_source = wakeup_source_register(chip->dev, "smb_mmi_hb_wake");
-#else
-	chip->smb_mmi_hb_wake_source = wakeup_source_register("smb_mmi_hb_wake");
-#endif
+	PM_WAKEUP_REGISTER(chip->dev, chip->smb_mmi_hb_wake_source, "smb_mmi_hb_wake");
 	if (!chip->smb_mmi_hb_wake_source) {
 		mmi_err(chip, "failed to allocate wakeup source\n");
 		return -ENOMEM;
@@ -4324,6 +4420,11 @@ static int smb_mmi_probe(struct platform_device *pdev)
 	if (rc)
 		mmi_err(chip, "Couldn't create factory_charge_upper\n");
 
+	rc = device_create_file(chip->dev,
+				&dev_attr_force_hvdcp_power_max);
+	if (rc)
+		mmi_err(chip, "Couldn't create force_hvdcp_power_max\n");
+
 	/* Register the notifier for the psy updates*/
 	chip->mmi_psy_notifier.notifier_call = mmi_psy_notifier_call;
 	rc = power_supply_reg_notifier(&chip->mmi_psy_notifier);
@@ -4476,7 +4577,7 @@ static void smb_mmi_shutdown(struct platform_device *pdev)
 	if (chip->max_flip_psy)
 		power_supply_put(chip->max_flip_psy);
 
-	wakeup_source_unregister(chip->smb_mmi_hb_wake_source);
+	PM_WAKEUP_UNREGISTER(chip->smb_mmi_hb_wake_source);
 
 	return;
 }

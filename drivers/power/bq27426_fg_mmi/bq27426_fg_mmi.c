@@ -63,7 +63,7 @@
 #endif
 
 #ifdef ATL_LS40_1545MAH_BATTERY_PROFILE
-#include "battery_profile/imported/smith_battery_flip_LS40_0726-bq27426G1-2766.gm.fs.h"
+#include "battery_profile/imported/smith_battery_flip_LS40_0826-bq27426G1-2766.gm.fs.h"
 #endif
 
 #undef pr_debug
@@ -203,11 +203,11 @@ static const struct fg_batt_profile bqfs_image[] = {
 #endif
 
 #ifdef ATL_LS30_1255MAH_BATTERY_PROFILE
-	{.batt_type_str = "LS30_ATL_1255MAH", .bqfs_image = smith_main_bqfs_image, .array_size = ARRAY_SIZE(smith_main_bqfs_image), .chem_id = 0x2767, .dm_ver = 4},
+	{.batt_type_str = "LS30_ATL_1255MAH", .bqfs_image = smith_main_bqfs_image, .array_size = ARRAY_SIZE(smith_main_bqfs_image), .chem_id = 0x2767, .dm_ver = 5},
 #endif
 
 #ifdef ATL_LS40_1545MAH_BATTERY_PROFILE
-	{.batt_type_str = "LS40_ATL_1545MAH", .bqfs_image = smith_flip_bqfs_image, .array_size = ARRAY_SIZE(smith_flip_bqfs_image), .chem_id = 0x2766, .dm_ver = 4},
+	{.batt_type_str = "LS40_ATL_1545MAH", .bqfs_image = smith_flip_bqfs_image, .array_size = ARRAY_SIZE(smith_flip_bqfs_image), .chem_id = 0x2766, .dm_ver = 5},
 #endif
 
 };
@@ -1024,6 +1024,8 @@ static int fg_read_status(struct bq_fg_chip *bq)
 	bq->batt_socf		= !!(flags & FG_FLAGS_SOCF);
 	bq->batt_dsg		= !!(flags & FG_FLAGS_DSG);
 	bq->allow_chg		= !!(flags & FG_FLAGS_CHG);
+	bq->itpor		= !!(flags & FG_FLAGS_ITPOR);
+	bq->cfg_update_mode	= !!(flags & FG_FLAGS_CFGUPMODE);
 	mutex_unlock(&bq->data_lock);
 
 	return 0;
@@ -1884,10 +1886,10 @@ static ssize_t fg_attr_show_qmax_ratable(struct device *dev,
 		return idx;
 	}
 
-	len = sprintf(&buf[idx], "Ra Table:\n");
+	len = sprintf(&buf[idx], "Ra Table: ");
 	idx += len;
 
-	for (i = 0; i < 15; i += 2) {
+	for (i = 0; i < 29; i += 2) {
 		len = sprintf(&buf[idx], "%d ", rd_buf[i] << 8 | rd_buf[i+1]);
 		idx += len;
 	}
@@ -1900,7 +1902,7 @@ static ssize_t fg_attr_show_qmax_ratable(struct device *dev,
 		return idx;
 	}
 
-	len = sprintf(&buf[idx], "V at Chg Term:%d\n", rd_buf[6] << 8 | rd_buf[7]);
+	len = sprintf(&buf[idx], "\nV at Chg Term:%d\n", rd_buf[6] << 8 | rd_buf[7]);
 	idx += len;
 
 	fg_dm_post_access(bq);
