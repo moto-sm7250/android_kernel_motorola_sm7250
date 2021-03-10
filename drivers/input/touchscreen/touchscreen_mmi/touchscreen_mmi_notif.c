@@ -17,7 +17,7 @@
 #include <linux/usb.h>
 #include <linux/power_supply.h>
 #include <linux/touchscreen_mmi.h>
-#include <linux/fingerprint_mmi.h>
+#include <linux/mmi_relay.h>
 
 #if defined(CONFIG_DRM_DYNAMIC_REFRESH_RATE)
 extern struct blocking_notifier_head dsi_freq_head;
@@ -309,7 +309,7 @@ static int ts_mmi_refresh_rate_cb(struct notifier_block *nb,
 	return 0;
 }
 
-static int ts_mmi_ps_get_state(struct power_supply *psy, bool *present)
+static inline int ts_mmi_ps_get_state(struct power_supply *psy, bool *present)
 {
 	union power_supply_propval pval = {0};
 	int ret;
@@ -376,34 +376,28 @@ static int ts_mmi_fps_cb(struct notifier_block *self,
 }
 
 static int ts_mmi_fps_notifier_register(struct ts_mmi_dev *touch_cdev, bool enable) {
-	int (*register_link)(struct notifier_block *nb, unsigned long stype, bool report);
-	int (*unregister_link)(struct notifier_block *nb, unsigned long stype);
 	int ret;
 
 	if (enable) {
-		register_link = symbol_get(FPS_register_notifier);
-		if (register_link) {
-			touch_cdev->fps_notif.notifier_call = ts_mmi_fps_cb;
-			ret = register_link(&touch_cdev->fps_notif, 0xBEEF, false);
-			symbol_put(FPS_register_notifier);
-			if (ret < 0) {
-				dev_err(DEV_TS,
-					"Failed to register fps_notifier: %d\n", ret);
-				return ret;
-			}
-			touch_cdev->is_fps_registered = true;
-			dev_info(DEV_TS, "Register fps_notifier OK\n");
-		} else
-			dev_err(DEV_TS, "no FPS_register_notifier exported.\n");
-	} else if (touch_cdev->is_fps_registered) {
-		unregister_link = symbol_get(FPS_unregister_notifier);
-		if (unregister_link)
-			unregister_link(&touch_cdev->fps_notif, 0xBEEF);
-		else
-			dev_err(DEV_TS, "no FPS_unregister_notifier exported.\n");
+		touch_cdev->fps_notif.notifier_call = ts_mmi_fps_cb;
+		/*register a blocking notification to receive FPS events*/
+		ret = relay_register_action(BLOCKING, FPS, &touch_cdev->fps_notif);
+		if (ret < 0) {
+			dev_err(DEV_TS,
+				"Failed to register fps_notifier: %d\n", ret);
+			return ret;
+		}
+		touch_cdev->is_fps_registered = true;
+		dev_info(DEV_TS, "Register fps_notifier OK\n");
+	} else if (touch_cdev->is_fps_registered){
+		ret = relay_unregister_action(BLOCKING, FPS, &touch_cdev->fps_notif);
+		if (ret < 0) {
+			dev_err(DEV_TS,
+				"Failed to unregister fps_notifier: %d\n", ret);
+		}
 		touch_cdev->is_fps_registered = false;
+		dev_info(DEV_TS, "Unregister fps_notifier OK\n");
 	}
-
 	return 0;
 }
 
@@ -424,10 +418,25 @@ int ts_mmi_notifiers_register(struct ts_mmi_dev *touch_cdev)
 		goto FIFO_ALLOC_FAILED;
 
 	if (touch_cdev->pdata.usb_detection) {
+		struct power_supply *psy = NULL;
+		bool present;
 		touch_cdev->ps_notif.notifier_call = ts_mmi_charger_cb;
 		ret = power_supply_reg_notifier(&touch_cdev->ps_notif);
 		if (ret)
 			goto PS_NOTIF_REGISTER_FAILED;
+
+		psy = power_supply_get_by_name("usb");
+		if (psy) {
+			ret = ts_mmi_ps_get_state(psy, &present);
+			if (!ret) {
+				touch_cdev->ps_is_present = present;
+				kfifo_put(&touch_cdev->cmd_pipe, TS_MMI_DO_PS);
+				schedule_delayed_work(&touch_cdev->work, 0);
+			}
+			power_supply_put(psy);
+			dev_info(DEV_MMI, "%s: USB initial status=%d\n",
+				__func__, touch_cdev->ps_is_present);
+		}
 	}
 
 	/*
@@ -437,10 +446,12 @@ int ts_mmi_notifiers_register(struct ts_mmi_dev *touch_cdev)
 	*/
 	touch_cdev->pm_mode = TS_MMI_PM_ACTIVE;
 
-	touch_cdev->panel_nb.notifier_call = ts_mmi_panel_cb;
-	ret = register_panel_notifier(&touch_cdev->panel_nb);
-	if (ret)
-		goto PANEL_NOTIF_REGISTER_FAILED;
+	if (!touch_cdev->panel_status) {
+		touch_cdev->panel_nb.notifier_call = ts_mmi_panel_cb;
+		ret = register_panel_notifier(&touch_cdev->panel_nb);
+		if (ret)
+			goto PANEL_NOTIF_REGISTER_FAILED;
+	}
 
 	if (touch_cdev->pdata.update_refresh_rate) {
 		touch_cdev->freq_nb.notifier_call = ts_mmi_refresh_rate_cb;
@@ -460,7 +471,8 @@ int ts_mmi_notifiers_register(struct ts_mmi_dev *touch_cdev)
 	return 0;
 
 FREQ_NOTIF_REGISTER_FAILED:
-	unregister_panel_notifier(&touch_cdev->panel_nb);
+	if (!touch_cdev->panel_status)
+		unregister_panel_notifier(&touch_cdev->panel_nb);
 PANEL_NOTIF_REGISTER_FAILED:
 	cancel_delayed_work(&touch_cdev->work);
 PS_NOTIF_REGISTER_FAILED:
@@ -485,7 +497,9 @@ void ts_mmi_notifiers_unregister(struct ts_mmi_dev *touch_cdev)
 	if (touch_cdev->pdata.usb_detection)
 		power_supply_unreg_notifier(&touch_cdev->ps_notif);
 
-	unregister_panel_notifier(&touch_cdev->panel_nb);
+	if (!touch_cdev->panel_status)
+		unregister_panel_notifier(&touch_cdev->panel_nb);
+
 	cancel_delayed_work(&touch_cdev->work);
 	kfifo_free(&touch_cdev->cmd_pipe);
 	dev_info(DEV_MMI, "%s:notifiers_unregister finish", __func__);

@@ -414,7 +414,11 @@ static int32_t nvt_save_rawdata_to_csv(int32_t *rawdata, uint8_t x_ch, uint8_t y
 	output_len = y_ch * x_ch * 7 + y_ch * 2;
 #endif /* #if TOUCH_KEY_NUM > 0 */
 	pos = offset;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0))
+	write_ret = kernel_write(fp, (char __user *)fbufp, output_len, &pos);
+#else
 	write_ret = vfs_write(fp, (char __user *)fbufp, output_len, &pos);
+#endif
 	if (write_ret <= 0) {
 		NVT_ERR("write %s failed\n", file_path);
 		set_fs(org_fs);
@@ -448,7 +452,7 @@ static int32_t nvt_polling_hand_shake_status(void)
 {
 	uint8_t buf[8] = {0};
 	int32_t i = 0;
-	const int32_t retry = 70;
+	const int32_t retry = 250;
 
 	for (i = 0; i < retry; i++) {
 		//---set xdata index to EVENT BUF ADDR---
@@ -1087,11 +1091,7 @@ static int32_t c_show_selftest(struct seq_file *m, void *v)
 	nvt_mp_seq_printf(m, "FW Version: %d\n\n", fw_ver);
 
 	nvt_mp_seq_printf(m, "Short Test");
-	if ((TestResult_Short == 0) || (TestResult_Short == 1)) {
-		print_selftest_result(m, TestResult_Short, RecordResult_Short, RawData_Short, X_Channel, Y_Channel);
-	} else { // TestResult_Short is -1
-		print_selftest_result(m, TestResult_Short, RecordResult_Short, RawData_Short, X_Channel, Y_Channel);
-	}
+	print_selftest_result(m, TestResult_Short, RecordResult_Short, RawData_Short, X_Channel, Y_Channel);
 
 	nvt_mp_seq_printf(m, "Open Test");
 	print_selftest_result(m, TestResult_Open, RecordResult_Open, RawData_Open, X_Channel, Y_Channel);
@@ -1216,7 +1216,10 @@ static int32_t nvt_selftest_open(struct inode *inode, struct file *file)
 #endif /* #if NVT_TOUCH_ESD_PROTECT */
 
 	//---Download MP FW---
-	nvt_update_firmware(MP_UPDATE_FIRMWARE_NAME);
+	if(nvt_mp_firmware_name)
+		nvt_update_firmware(nvt_mp_firmware_name);
+	else
+		nvt_update_firmware(MP_UPDATE_FIRMWARE_NAME);
 
 	if (nvt_get_fw_info()) {
 		mutex_unlock(&ts->lock);
@@ -1236,11 +1239,14 @@ static int32_t nvt_selftest_open(struct inode *inode, struct file *file)
 		 * Ex. nvt_pid = 500A
 		 *     mpcriteria = "novatek-mp-criteria-500A"
 		 */
-		snprintf(mpcriteria, PAGE_SIZE, "novatek-mp-criteria-%04X", ts->nvt_pid);
+		scnprintf(mpcriteria, sizeof(mpcriteria), "novatek-mp-criteria-%04X", ts->nvt_pid);
 
 		if (nvt_mp_parse_dt(np, mpcriteria)) {
 			//---Download Normal FW---
-			nvt_update_firmware(BOOT_UPDATE_FIRMWARE_NAME);
+			if(nvt_boot_firmware_name)
+				nvt_update_firmware(nvt_boot_firmware_name);
+			else
+				nvt_update_firmware(BOOT_UPDATE_FIRMWARE_NAME);
 			mutex_unlock(&ts->lock);
 			NVT_ERR("mp parse device tree failed!\n");
 			return -EINVAL;
@@ -1343,7 +1349,10 @@ static int32_t nvt_selftest_open(struct inode *inode, struct file *file)
 	}
 
 	//---Download Normal FW---
-	nvt_update_firmware(BOOT_UPDATE_FIRMWARE_NAME);
+	if(nvt_boot_firmware_name)
+		nvt_update_firmware(nvt_boot_firmware_name);
+	else
+		nvt_update_firmware(BOOT_UPDATE_FIRMWARE_NAME);
 
 	mutex_unlock(&ts->lock);
 

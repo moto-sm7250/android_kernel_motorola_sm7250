@@ -25,7 +25,16 @@
 #include <linux/of_gpio.h>
 #include <linux/of_irq.h>
 #include <linux/power_supply.h>
+#include <linux/version.h>
 
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)) || defined(NVT_CONFIG_DRM_PANEL))
+#if defined(CONFIG_DRM)
+#include <linux/msm_drm_notify.h>
+#include <linux/notifier.h>
+#include <linux/fb.h>
+#include <drm/drm_panel.h>
+#endif
+#else //vension code < 5.4.0
 #if defined(CONFIG_FB)
 #ifdef CONFIG_DRM_MSM
 #include <linux/msm_drm_notify.h>
@@ -35,7 +44,7 @@
 #elif defined(CONFIG_HAS_EARLYSUSPEND)
 #include <linux/earlysuspend.h>
 #endif
-
+#endif //end version code >= 5.4.0
 #include "nt36xxx.h"
 #if NVT_TOUCH_ESD_PROTECT
 #include <linux/jiffies.h>
@@ -57,7 +66,7 @@ enum touch_state {
 #ifdef CONFIG_HAS_WAKELOCK
 static struct wake_lock gesture_wakelock;
 #else
-static struct wakeup_source gesture_wakelock;
+static struct wakeup_source *gesture_wakelock;
 #endif
 static struct sensors_classdev __maybe_unused sensors_touch_cdev = {
 
@@ -83,7 +92,7 @@ static struct sensors_classdev __maybe_unused sensors_touch_cdev = {
 #endif
 
 #if NVT_TOUCH_ESD_PROTECT
-static struct delayed_work nvt_esd_check_work;
+struct delayed_work nvt_esd_check_work;
 static struct workqueue_struct *nvt_esd_check_wq;
 static unsigned long irq_timer = 0;
 uint8_t esd_check = false;
@@ -102,11 +111,31 @@ extern void nvt_mp_proc_deinit(void);
 
 struct nvt_ts_data *ts;
 
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)) || defined(NVT_CONFIG_DRM_PANEL))
+#if defined(CONFIG_DRM)
+static struct drm_panel *active_panel;
+static const char *active_panel_name = NULL;
+#endif
+#endif
+
 #if BOOT_UPDATE_FIRMWARE
 static struct workqueue_struct *nvt_fwu_wq;
 extern void Boot_Update_Firmware(struct work_struct *work);
 #endif
 
+#ifdef NOVATECH_PEN_NOTIFIER
+int nvt_mcu_pen_detect_set(uint8_t pen_detect);
+#endif
+
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)) || defined(NVT_CONFIG_DRM_PANEL))
+#if defined(CONFIG_DRM)
+static int nvt_drm_notifier_callback(struct notifier_block *self, unsigned long event, void *data);
+#ifdef LCM_FAST_LIGHTUP
+static struct work_struct ts_resume_work;
+static void nova_resume_work_func(struct work_struct *work);
+#endif //end LCM_FAST_LIGHTUP
+#endif
+#else //vension code < 5.4.0
 #if defined(CONFIG_FB)
 #ifdef _MSM_DRM_NOTIFY_H_
 static int nvt_drm_notifier_callback(struct notifier_block *self, unsigned long event, void *data);
@@ -121,6 +150,7 @@ static void nvt_ts_late_resume(struct early_suspend *h);
 #ifdef NVT_CONFIG_PANEL_NOTIFICATIONS
 static int nvt_panel_notifier_callback(struct notifier_block *self, unsigned long event, void *data);
 #endif
+#endif //end version code >= 5.4.0
 
 uint32_t ENG_RST_ADDR  = 0x7FFF80;
 uint32_t SWRST_N8_ADDR = 0; //read from dtsi
@@ -129,6 +159,9 @@ static int charger_notifier_callback(struct notifier_block *nb, unsigned long va
 static int nvt_set_charger(uint8_t charger_on_off);
 static void nvt_charger_notify_work(struct work_struct *work);
 static int usb_detect_flag = 0;
+
+char *nvt_boot_firmware_name = NULL;
+char *nvt_mp_firmware_name = NULL;
 
 #if TOUCH_KEY_NUM > 0
 const uint16_t touch_key_array[TOUCH_KEY_NUM] = {
@@ -230,7 +263,8 @@ static inline int32_t spi_read_write(struct spi_device *client, uint8_t *buf, si
 		.len    = len,
 	};
 
-	memcpy(ts->xbuf, buf, len + DUMMY_BYTES);
+	memset(ts->xbuf, 0, len + DUMMY_BYTES);
+	memcpy(ts->xbuf, buf, len);
 
 	switch (rw) {
 		case NVTREAD:
@@ -1054,7 +1088,7 @@ void nvt_ts_wakeup_gesture_report(uint8_t gesture_id, uint8_t *data)
 #ifdef CONFIG_HAS_WAKELOCK
 		wake_lock_timeout(&gesture_wakelock, msecs_to_jiffies(5000));
 #else
-		__pm_wakeup_event(&gesture_wakelock, 5000);
+		PM_WAKEUP_EVENT(gesture_wakelock, 5000);
 #endif
 #else
 		input_report_key(ts->input_dev, keycode, 1);
@@ -1104,10 +1138,46 @@ static int nvt_get_dt_def_coords(struct device *dev, char *name)
 	return rc;
 }
 
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)) || defined(NVT_CONFIG_DRM_PANEL))
+#if defined(CONFIG_DRM)
+static int nova_check_dt(struct device_node *np)
+{
+	int i;
+	int count;
+	struct device_node *node;
+	struct drm_panel *panel;
+
+	count = of_count_phandle_with_args(np, "panel", NULL);
+	if (count <= 0)
+		return 0;
+
+	NVT_LOG("nova_check_dt, count=%d\n", count);
+	for (i = 0; i < count; i++) {
+		node = of_parse_phandle(np, "panel", i);
+		panel = of_drm_find_panel(node);
+		of_node_put(node);
+		if (!IS_ERR(panel)) {
+			active_panel = panel;
+			active_panel_name = node->name;
+			NVT_LOG("nova_check_dt, active_panel: %s !\n", active_panel_name);
+			return 0;
+		}
+	}
+
+	return -ENODEV;
+}
+#endif
+#endif
+
 static int32_t nvt_parse_dt(struct device *dev)
 {
 	struct device_node *np = dev->of_node;
 	int32_t ret = 0;
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)) || defined(NVT_CONFIG_DRM_PANEL))
+	int num_of_panel_supplier;
+	int j;
+	const char *panel_supplier;
+#endif
 
 #if NVT_TOUCH_SUPPORT_HW_RST
 	ts->reset_gpio = of_get_named_gpio_flags(np, "novatek,reset-gpio", 0, &ts->reset_flags);
@@ -1123,6 +1193,77 @@ static int32_t nvt_parse_dt(struct device *dev)
 	} else {
 		NVT_LOG("SWRST_N8_ADDR=0x%06X\n", SWRST_N8_ADDR);
 	}
+
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)) || defined(NVT_CONFIG_DRM_PANEL))
+	num_of_panel_supplier = of_property_count_strings(np, "novatek,panel-supplier");
+	NVT_LOG("%s: get novatek,panel-supplier count=%d", __func__, num_of_panel_supplier);
+	if (active_panel_name && num_of_panel_supplier > 1) {
+		for (j = 0; j < num_of_panel_supplier; j++) {
+			ret = of_property_read_string_index(np, "novatek,panel-supplier", j, &panel_supplier);
+			if (ret < 0) {
+				NVT_LOG("%s: cannot parse panel-supplier: %d\n", __func__, ret);
+				break;
+			} else if (panel_supplier && strstr(active_panel_name, panel_supplier)) {
+				ts->panel_supplier = panel_supplier;
+				NVT_LOG("%s: matched panel_supplier: %s", __func__, panel_supplier);
+				break;
+			}
+		}
+	} else {
+		//in case the panel-supplier info does not completely contained in panel name.
+		ret = of_property_read_string(np, "novatek,panel-supplier",
+			&ts->panel_supplier);
+	}
+#else
+	ret = of_property_read_string(np, "novatek,panel-supplier",
+		&ts->panel_supplier);
+#endif
+	if (ret < 0) {
+		NVT_LOG("Unable to read panel supplier\n");
+	} else {
+		NVT_LOG("panel supplier is %s", (char *)ts->panel_supplier);
+		nvt_boot_firmware_name = kzalloc(NVT_FILE_NAME_LENGTH, GFP_KERNEL);
+		if (!nvt_boot_firmware_name) {
+			NVT_LOG("%s: alloc nvt_boot_firmware_name failed\n", __func__);
+			goto nvt_boot_firmware_name_alloc_failed;
+		}
+		nvt_mp_firmware_name = kzalloc(NVT_FILE_NAME_LENGTH, GFP_KERNEL);
+		if (!nvt_boot_firmware_name) {
+			NVT_LOG("%s: alloc nvt_boot_firmware_name failed\n", __func__);
+			goto nvt_mp_firmware_name_alloc_failed;
+		}
+		snprintf(nvt_boot_firmware_name, NVT_FILE_NAME_LENGTH, "%s_novatek_ts_fw.bin",
+			ts->panel_supplier);
+		snprintf(nvt_mp_firmware_name, NVT_FILE_NAME_LENGTH, "%s_novatek_ts_mp.bin",
+			ts->panel_supplier);
+
+		//Support FW name with panel & IC info
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)) || defined(NVT_CONFIG_DRM_PANEL))
+		if (active_panel_name) {
+			const char *ic_name;
+			int num_of_ic = of_property_count_strings(np, "novatek,fw_ic_info");
+			if (num_of_ic > 0) {
+				int i;
+				NVT_LOG("%s: get novatek,fw_ic_info count=%d", __func__, num_of_ic);
+				for (i = 0; i < num_of_ic; i++) {
+					ret = of_property_read_string_index(np, "novatek,fw_ic_info", i, &ic_name);
+					if (ret < 0) {
+						NVT_LOG("%s: cannot parse fw_ic_info: %d\n", __func__, ret);
+						break;
+					} else if (ic_name && strstr(active_panel_name, ic_name)) {
+						NVT_LOG("%s: matched FW IC: %s", __func__, ic_name);
+						snprintf(nvt_boot_firmware_name, NVT_FILE_NAME_LENGTH, "%s_%s_novatek_ts_fw.bin",
+							ts->panel_supplier, ic_name);
+						snprintf(nvt_mp_firmware_name, NVT_FILE_NAME_LENGTH, "%s_%s_novatek_ts_mp.bin",
+							ts->panel_supplier, ic_name);
+						break;
+					}
+				}
+			}
+		}
+#endif
+	}
+	NVT_LOG("boot firmware %s, mp firmware %s", nvt_boot_firmware_name, nvt_mp_firmware_name);
 
 	ret = nvt_get_dt_def_coords(dev, "novatek,def-max-resolution");
 	if (ret) {
@@ -1168,6 +1309,13 @@ static int32_t nvt_parse_dt(struct device *dev)
 	} else {
 		ts->report_gesture_key = 0;
 	}
+
+	return ret;
+
+nvt_mp_firmware_name_alloc_failed:
+	kfree(nvt_boot_firmware_name);
+	nvt_boot_firmware_name = NULL;
+nvt_boot_firmware_name_alloc_failed:
 	return ret;
 }
 #else
@@ -1276,7 +1424,10 @@ static void nvt_esd_check_func(struct work_struct *work)
 		mutex_lock(&ts->lock);
 		NVT_ERR("do ESD recovery, timer = %d, retry = %d\n", timer, esd_retry);
 		/* do esd recovery, reload fw */
-		nvt_update_firmware(BOOT_UPDATE_FIRMWARE_NAME);
+		if(nvt_boot_firmware_name)
+			nvt_update_firmware(nvt_boot_firmware_name);
+		else
+			nvt_update_firmware(BOOT_UPDATE_FIRMWARE_NAME);
 		mutex_unlock(&ts->lock);
 		/* update interrupt timer */
 		irq_timer = jiffies;
@@ -1347,7 +1498,17 @@ static int32_t nvt_ts_point_data_checksum(uint8_t *buf, uint8_t length)
 }
 #endif /* POINT_DATA_CHECKSUM */
 
+#define FINGER_ENTER 0x01
+#define FINGER_MOVING 0x02
+#ifdef PALM_GESTURE
+#define PALM_TOUCH 0x05
+#define POINT_DATA_LEN 120
+#define MINOR_DATA_OFFSET 70
+#define ORIENT_DATA_OFFSET 110
+#else
 #define POINT_DATA_LEN 65
+#endif
+
 /*******************************************************
 Description:
 	Novatek touchscreen work function.
@@ -1362,7 +1523,11 @@ static irqreturn_t nvt_ts_work_func(int irq, void *data)
 	uint32_t position = 0;
 	uint32_t input_x = 0;
 	uint32_t input_y = 0;
-	uint32_t input_w = 0;
+	uint32_t input_major = 0;
+#ifdef PALM_GESTURE
+	uint32_t input_minor = 0;
+	int32_t input_orient = 0;
+#endif
 	uint32_t input_p = 0;
 	uint8_t input_id = 0;
 #if MT_PROTOCOL_B
@@ -1395,10 +1560,13 @@ static irqreturn_t nvt_ts_work_func(int irq, void *data)
 
 #if NVT_TOUCH_WDT_RECOVERY
    /* ESD protect by WDT */
-   if (nvt_wdt_fw_recovery(point_data)) {
-       NVT_ERR("Recover for fw reset, %02X\n", point_data[1]);
-       nvt_update_firmware(BOOT_UPDATE_FIRMWARE_NAME);
-       goto XFER_ERROR;
+	if (nvt_wdt_fw_recovery(point_data)) {
+		NVT_ERR("Recover for fw reset, %02X\n", point_data[1]);
+		if(nvt_boot_firmware_name)
+			nvt_update_firmware(nvt_boot_firmware_name);
+		else
+			nvt_update_firmware(BOOT_UPDATE_FIRMWARE_NAME);
+		goto XFER_ERROR;
    }
 #endif /* #if NVT_TOUCH_WDT_RECOVERY */
 
@@ -1435,8 +1603,13 @@ static irqreturn_t nvt_ts_work_func(int irq, void *data)
 		input_id = (uint8_t)(point_data[position + 0] >> 3);
 		if ((input_id == 0) || (input_id > ts->max_touch_num))
 			continue;
-
-		if (((point_data[position] & 0x07) == 0x01) || ((point_data[position] & 0x07) == 0x02)) {	//finger down (enter & moving)
+#ifdef PALM_GESTURE
+		if (((point_data[position] & 0x07) == FINGER_ENTER)
+			|| ((point_data[position] & 0x07) == FINGER_MOVING)
+			|| ((point_data[position] & 0x07) == PALM_TOUCH)) {	//finger down (enter & moving) or palm
+#else
+		if (((point_data[position] & 0x07) == FINGER_ENTER) || ((point_data[position] & 0x07) == FINGER_MOVING)) {	//finger down (enter & moving)
+#endif
 #if NVT_TOUCH_ESD_PROTECT
 			/* update interrupt timer */
 			irq_timer = jiffies;
@@ -1447,15 +1620,43 @@ static irqreturn_t nvt_ts_work_func(int irq, void *data)
 				continue;
 			if ((input_x > ts->abs_x_max) || (input_y > ts->abs_y_max))
 				continue;
-			input_w = (uint32_t)(point_data[position + 4]);
-			if (input_w == 0)
-				input_w = 1;
-			if (i < 2) {
-				input_p = (uint32_t)(point_data[position + 5]) + (uint32_t)(point_data[i + 63] << 8);
-				if (input_p > TOUCH_FORCE_NUM)
-					input_p = TOUCH_FORCE_NUM;
-			} else {
+
+#ifdef PALM_GESTURE_RANGE
+			if((point_data[position] & 0x07) == PALM_TOUCH) { //palm
+				input_minor = (uint32_t)(point_data[1 + MINOR_DATA_OFFSET + i]);
+				if (input_minor == 0)
+					input_minor = 1;
+
+				input_orient = (int8_t)(point_data[1 + ORIENT_DATA_OFFSET + i]);
+			}
+#endif
+			input_major = (uint32_t)(point_data[position + 4]);
+			if (input_major == 0)
+				input_major = 1;
+
+#ifdef PALM_GESTURE
+			if ((point_data[position] & 0x07) == PALM_TOUCH) { //palm
 				input_p = (uint32_t)(point_data[position + 5]);
+				if(input_p == 255)
+					input_p = PALM_HANG;
+				else if (input_p == 254)
+					input_p = PALM_HAND_HOLDE;
+
+#ifdef PALM_GESTURE_RANGE
+				//dimension-to-pixel
+				input_minor = input_minor * TOUCH_DEFAULT_MAX_WIDTH / PANEL_REAL_WIDTH * 100;
+				input_major = input_major * TOUCH_DEFAULT_MAX_HEIGHT / PANEL_REAL_HEIGHT * 100;
+#endif
+			} else
+#endif
+			{
+				if (i < 2) {
+					input_p = (uint32_t)(point_data[position + 5]) + (uint32_t)(point_data[i + 63] << 8);
+					if (input_p > TOUCH_FORCE_NUM)
+						input_p = TOUCH_FORCE_NUM;
+				} else {
+					input_p = (uint32_t)(point_data[position + 5]);
+				}
 			}
 			if (input_p == 0)
 				input_p = 1;
@@ -1469,11 +1670,28 @@ static irqreturn_t nvt_ts_work_func(int irq, void *data)
 			input_report_key(ts->input_dev, BTN_TOUCH, 1);
 #endif /* MT_PROTOCOL_B */
 
-			input_report_abs(ts->input_dev, ABS_MT_POSITION_X, input_x);
-			input_report_abs(ts->input_dev, ABS_MT_POSITION_Y, input_y);
-			input_report_abs(ts->input_dev, ABS_MT_TOUCH_MAJOR, input_w);
-			input_report_abs(ts->input_dev, ABS_MT_PRESSURE, input_p);
-
+#ifdef PALM_GESTURE
+			if((point_data[position] & 0x07) == PALM_TOUCH) { //palm
+				dev_dbg(&ts->client->dev, "id=%d, pressure=%d, (%d,%d), major=%d, minor=%d, orient=%d\n",
+					input_id, input_p, input_x, input_y, input_major, input_minor, input_orient);
+				input_report_abs(ts->input_dev, ABS_MT_POSITION_X, input_x);
+				input_report_abs(ts->input_dev, ABS_MT_POSITION_Y, input_y);
+				input_report_abs(ts->input_dev, ABS_MT_TOUCH_MAJOR, input_major);
+#ifdef PALM_GESTURE_RANGE
+				input_report_abs(ts->input_dev, ABS_MT_TOUCH_MINOR, input_minor);
+				input_report_abs(ts->input_dev, ABS_MT_ORIENTATION, input_orient);
+#endif
+				input_report_abs(ts->input_dev, ABS_MT_PRESSURE, input_p);
+			} else
+#endif
+			{
+				dev_dbg(&ts->client->dev, "id=%d, pressure=%d, (%d,%d), major=%d\n",
+					input_id, input_p, input_x, input_y, input_major);
+				input_report_abs(ts->input_dev, ABS_MT_POSITION_X, input_x);
+				input_report_abs(ts->input_dev, ABS_MT_POSITION_Y, input_y);
+				input_report_abs(ts->input_dev, ABS_MT_TOUCH_MAJOR, input_major);
+				input_report_abs(ts->input_dev, ABS_MT_PRESSURE, input_p);
+			}
 #if MT_PROTOCOL_B
 #else /* MT_PROTOCOL_B */
 			input_mt_sync(ts->input_dev);
@@ -1487,6 +1705,10 @@ static irqreturn_t nvt_ts_work_func(int irq, void *data)
 	for (i = 0; i < ts->max_touch_num; i++) {
 		if (press_id[i] != 1) {
 			input_mt_slot(ts->input_dev, i);
+#ifdef PALM_GESTURE_RANGE
+			input_report_abs(ts->input_dev, ABS_MT_TOUCH_MINOR, 0);
+			input_report_abs(ts->input_dev, ABS_MT_ORIENTATION, 0);
+#endif
 			input_report_abs(ts->input_dev, ABS_MT_TOUCH_MAJOR, 0);
 			input_report_abs(ts->input_dev, ABS_MT_PRESSURE, 0);
 			input_mt_report_slot_state(ts->input_dev, MT_TOOL_FINGER, false);
@@ -1534,7 +1756,7 @@ Description:
 return:
 	Executive outcomes. 0---NVT IC. -1---not NVT IC.
 *******************************************************/
-static int8_t nvt_ts_check_chip_ver_trim(void)
+static int8_t nvt_ts_check_chip_ver_trim(uint32_t chip_ver_trim_addr)
 {
 	uint8_t buf[8] = {0};
 	int32_t retry = 0;
@@ -1548,10 +1770,9 @@ static int8_t nvt_ts_check_chip_ver_trim(void)
 
 		nvt_bootloader_reset();
 
-		//---set xdata index to 0x1F600---
-		nvt_set_page(0x1F64E);
+		nvt_set_page(chip_ver_trim_addr);
 
-		buf[0] = 0x4E;
+		buf[0] = chip_ver_trim_addr & 0x7F;
 		buf[1] = 0x00;
 		buf[2] = 0x00;
 		buf[3] = 0x00;
@@ -1559,6 +1780,7 @@ static int8_t nvt_ts_check_chip_ver_trim(void)
 		buf[5] = 0x00;
 		buf[6] = 0x00;
 		CTP_SPI_READ(ts->client, buf, 7);
+		NVT_LOG("nvt_ts_check_chip_ver_trim: buf[0]=0x%02X\n", buf[0]);
 		NVT_LOG("buf[1]=0x%02X, buf[2]=0x%02X, buf[3]=0x%02X, buf[4]=0x%02X, buf[5]=0x%02X, buf[6]=0x%02X\n",
 			buf[1], buf[2], buf[3], buf[4], buf[5], buf[6]);
 
@@ -1687,6 +1909,14 @@ int nvt_sensor_remove(struct nvt_ts_data *data)
 	data->sensor_pdata = NULL;
 	data->wakeable = false;
 	data->should_enable_gesture = false;
+	if (!nvt_boot_firmware_name) {
+		kfree(nvt_boot_firmware_name);
+		nvt_boot_firmware_name = NULL;
+	}
+	if (!nvt_mp_firmware_name) {
+		kfree(nvt_mp_firmware_name);
+		nvt_mp_firmware_name = NULL;
+	}
 	return 0;
 }
 #endif
@@ -1727,10 +1957,55 @@ static ssize_t ic_ver_show(struct device *dev,
 			"Config ID: ", ts->nvt_pid ? ts->nvt_pid : ts->config_id);
 }
 
+#ifdef PALM_GESTURE
+static ssize_t nvt_palm_settings_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%d", ts->palm_enabled);
+}
+
+static ssize_t nvt_palm_settings_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
+
+{
+	int value;
+	int err = 0;
+
+	if (count > 2)
+		return -EINVAL;
+
+	if (sscanf(buf, "%d", &value) != 1)
+		return -EINVAL;
+
+	err = count;
+
+	switch (value) {
+		case 0:
+			ts->palm_enabled = false;
+			break;
+		case 1:
+			ts->palm_enabled = true;
+			break;
+		default:
+			err = -EINVAL;
+			ts->palm_enabled = false;
+			NVT_ERR("Invalid Value! %d\n", value);
+			break;
+	}
+
+	nvt_palm_set(ts->palm_enabled);
+
+	return err;
+}
+#endif
+
 static struct device_attribute touchscreen_attributes[] = {
 	__ATTR_RO(path),
 	__ATTR_RO(vendor),
 	__ATTR_RO(ic_ver),
+#ifdef PALM_GESTURE
+	__ATTR(palm_settings, S_IRUGO | S_IWUSR | S_IWGRP, nvt_palm_settings_show, nvt_palm_settings_store),
+#endif
 	__ATTR_NULL
 };
 
@@ -1749,17 +2024,23 @@ int32_t nvt_fw_class_init(bool create)
 {
 	struct device_attribute *attrs = touchscreen_attributes;
 	int i, error = 0;
+	s32 ret = 0;
 	static struct class *touchscreen_class;
 	static struct device *ts_class_dev;
+	dev_t devno;
 	static int minor;
 
 	if (create) {
-		minor = input_get_new_minor(ts->client->chip_select,
-						1, false);
-		if (minor < 0)
-			minor = input_get_new_minor(TSDEV_MINOR_BASE,
-					TSDEV_MINOR_MAX, true);
-		NVT_LOG("assigned minor %d\n", minor);
+#ifdef PALM_GESTURE
+		ret = alloc_chrdev_region(&devno, 0, 1, NVT_PRIMARY_NAME);
+#else
+		ret = alloc_chrdev_region(&devno, 0, 1, NVT_SPI_NAME);
+#endif
+
+		if (ret) {
+			NVT_ERR("cant`t allocate chrdev\n");
+			return ret;
+		}
 
 		touchscreen_class = class_create(THIS_MODULE, "touchscreen");
 		if (IS_ERR(touchscreen_class)) {
@@ -1769,8 +2050,12 @@ int32_t nvt_fw_class_init(bool create)
 		}
 
 		ts_class_dev = device_create(touchscreen_class, NULL,
-				MKDEV(INPUT_MAJOR, minor),
+				devno,
+#ifdef PALM_GESTURE
+				ts, NVT_PRIMARY_NAME);
+#else
 				ts, NVT_SPI_NAME);
+#endif
 		if (IS_ERR(ts_class_dev)) {
 			error = PTR_ERR(ts_class_dev);
 			ts_class_dev = NULL;
@@ -1786,7 +2071,11 @@ int32_t nvt_fw_class_init(bool create)
 		if (error)
 			goto device_destroy;
 		else
+#ifdef PALM_GESTURE
+			NVT_LOG("create /sys/class/touchscreen/%s Succeeded!\n", NVT_PRIMARY_NAME);
+#else
 			NVT_LOG("create /sys/class/touchscreen/%s Succeeded!\n", NVT_SPI_NAME);
+#endif
 	} else {
 		if (!touchscreen_class || !ts_class_dev)
 			return -ENODEV;
@@ -1798,7 +2087,7 @@ int32_t nvt_fw_class_init(bool create)
 		class_unregister(touchscreen_class);
 	}
 
-	return 0;
+	return ret;
 
 device_destroy:
 	for (--i; i >= 0; --i)
@@ -1811,7 +2100,30 @@ device_destroy:
 	return -ENODEV;
 }
 
+#ifdef NOVATECH_PEN_NOTIFIER
+static int pen_notifier_callback(struct notifier_block *self,
+				unsigned long event, void *data)
+{
+    int ret = 0;
+    NVT_LOG("Received event(%lu) for pen detection\n", event);
 
+    if (event == PEN_DETECTION_INSERT)
+        ts->nvt_pen_detect_flag = PEN_DETECTION_INSERT;
+    else if (event == PEN_DETECTION_PULL)
+        ts->nvt_pen_detect_flag = PEN_DETECTION_PULL;
+
+    if (!bTouchIsAwake || !ts->fw_ready_flag) {
+        NVT_LOG("touch in suspend or no firmware, so store.");
+    } else {
+        ret = nvt_mcu_pen_detect_set(ts->nvt_pen_detect_flag);
+        if (ret < 0) {
+            NVT_ERR("write pen state fail");
+        }
+    }
+
+    return 0;
+}
+#endif
 
 /*******************************************************
 Description:
@@ -1829,6 +2141,15 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 #ifdef NVT_SENSOR_EN
 	static bool initialized_sensor;
 #endif
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)) || defined(NVT_CONFIG_DRM_PANEL))
+	struct device_node *dp = client->dev.of_node;
+
+	ret = nova_check_dt(dp);
+	if (ret) {
+		NVT_LOG("panel error\n");
+		return ret;
+	}
+#endif
 
 	NVT_LOG("start\n");
 
@@ -1841,11 +2162,15 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 	ts->xbuf = (uint8_t *)kzalloc((NVT_TRANSFER_LEN+2), GFP_KERNEL);
 	if(ts->xbuf == NULL) {
 		NVT_ERR("kzalloc for xbuf failed!\n");
-		if (ts) {
-			kfree(ts);
-			ts = NULL;
-		}
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto err_malloc_xbuf;
+	}
+
+	ts->rbuf = (uint8_t *)kzalloc(NVT_READ_LEN, GFP_KERNEL);
+	if(ts->rbuf == NULL) {
+		NVT_ERR("kzalloc for rbuf failed!\n");
+		ret = -ENOMEM;
+		goto err_malloc_rbuf;
 	}
 
 	ts->client = client;
@@ -1915,7 +2240,15 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 	msleep(10);
 
 	//---check chip version trim---
-	ret = nvt_ts_check_chip_ver_trim();
+#ifdef NVT_CONFIG_CHIP_VER_1
+	ret = nvt_ts_check_chip_ver_trim(CHIP_VER_TRIM_ADDR_V1);
+	if (ret) {
+		NVT_LOG("try to check from old chip ver trim address\n");
+		ret = nvt_ts_check_chip_ver_trim(CHIP_VER_TRIM_ADDR_V0);
+	}
+#else
+	ret = nvt_ts_check_chip_ver_trim(CHIP_VER_TRIM_ADDR_V0);
+#endif
 	if (ret) {
 		NVT_ERR("chip is not identified\n");
 		ret = -EINVAL;
@@ -1951,8 +2284,13 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 	input_set_abs_params(ts->input_dev, ABS_MT_PRESSURE, 0, TOUCH_FORCE_NUM, 0, 0);    //pressure = TOUCH_FORCE_NUM
 
 #if TOUCH_MAX_FINGER_NUM > 1
+#ifdef PALM_GESTURE_RANGE
+	input_set_abs_params(ts->input_dev, ABS_MT_TOUCH_MAJOR, 0, TOUCH_DEFAULT_MAX_HEIGHT, 0, 0);
+	input_set_abs_params(ts->input_dev, ABS_MT_TOUCH_MINOR, 0, TOUCH_DEFAULT_MAX_HEIGHT, 0, 0);
+	input_set_abs_params(ts->input_dev, ABS_MT_ORIENTATION, TOUCH_ORIENTATION_MIN, TOUCH_ORIENTATION_MAX, 0, 0);
+#else
 	input_set_abs_params(ts->input_dev, ABS_MT_TOUCH_MAJOR, 0, 255, 0, 0);    //area = 255
-
+#endif
 	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_X, 0, ts->abs_x_max, 0, 0);
 	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_Y, 0, ts->abs_y_max, 0, 0);
 #if MT_PROTOCOL_B
@@ -1972,6 +2310,10 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 	for (retry = 0; retry < (sizeof(gesture_key_array) / sizeof(gesture_key_array[0])); retry++) {
 		input_set_capability(ts->input_dev, EV_KEY, gesture_key_array[retry]);
 	}
+#endif
+
+#ifdef PALM_GESTURE
+	ts->palm_enabled = false;
 #endif
 
 	sprintf(ts->phys, "input/ts");
@@ -2010,7 +2352,11 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 #ifdef CONFIG_HAS_WAKELOCK
 		wake_lock_init(&gesture_wakelock, WAKE_LOCK_SUSPEND, "dt-wake-lock");
 #else
-		wakeup_source_init(&gesture_wakelock, "dt-wake-lock");
+		PM_WAKEUP_REGISTER(&client->dev, gesture_wakelock, "dt-wake-lock");
+		if (!gesture_wakelock) {
+			NVT_ERR("failed to allocate wakeup source\n");
+			goto err_wakeup_source_register_failed;
+		}
 #endif
 		if (!nvt_sensor_init(ts))
 			initialized_sensor = true;
@@ -2081,7 +2427,9 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 	// please make sure boot update start after display reset(RESX) sequence
 	queue_delayed_work(nvt_fwu_wq, &ts->nvt_fwu_work, msecs_to_jiffies(14000));
 #endif
-
+#ifdef LCM_FAST_LIGHTUP
+	INIT_WORK(&ts_resume_work, nova_resume_work_func);
+#endif
 	NVT_LOG("NVT_TOUCH_ESD_PROTECT is %d\n", NVT_TOUCH_ESD_PROTECT);
 #if NVT_TOUCH_ESD_PROTECT
 	INIT_DELAYED_WORK(&nvt_esd_check_work, nvt_esd_check_func);
@@ -2120,6 +2468,28 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 	}
 #endif
 
+#ifdef NOVATECH_PEN_NOTIFIER
+	ts->fw_ready_flag = false;
+	ts->nvt_pen_detect_flag = PEN_DETECTION_INSERT;
+	ts->pen_notif.notifier_call = pen_notifier_callback;
+	ret = pen_detection_register_client(&ts->pen_notif);
+	if (ret) {
+		NVT_ERR("[PEN]Unable to register pen_notifier: %d\n", ret);
+		goto err_register_pen_notif_failed;
+    }
+#endif
+
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)) || defined(NVT_CONFIG_DRM_PANEL))
+#if defined(CONFIG_DRM)
+	ts->drm_notif.notifier_call = nvt_drm_notifier_callback;
+	if (active_panel &&
+		drm_panel_notifier_register(active_panel,
+			&ts->drm_notif) < 0) {
+		NVT_LOG("register notifier failed!\n");
+		goto err_register_drm_notif_failed;
+	}
+#endif
+#else //vension code < 5.4.0
 #if defined(CONFIG_FB)
 #ifdef _MSM_DRM_NOTIFY_H_
 	ts->drm_notif.notifier_call = nvt_drm_notifier_callback;
@@ -2156,6 +2526,7 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 		goto err_register_early_suspend_failed;
 	}
 #endif
+#endif //end version code >= 5.4.0
 
 	ret = nvt_fw_class_init(true);
 	if (ret) {
@@ -2170,6 +2541,15 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 
 	return 0;
 err_create_touchscreen_class_failed:
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)) || defined(NVT_CONFIG_DRM_PANEL))
+#if defined(CONFIG_DRM)
+	if (active_panel) {
+		if (drm_panel_notifier_unregister(active_panel, &ts->drm_notif))
+			NVT_ERR("Error occurred while unregistering drm_notifier.\n");
+	}
+err_register_drm_notif_failed:
+#endif
+#else //vension code < 5.4.0
 #if defined(CONFIG_FB)
 #ifdef _MSM_DRM_NOTIFY_H_
 	if (msm_drm_unregister_client(&ts->drm_notif))
@@ -2183,6 +2563,12 @@ err_register_fb_notif_failed:
 #elif defined(CONFIG_HAS_EARLYSUSPEND)
 	unregister_early_suspend(&ts->early_suspend);
 err_register_early_suspend_failed:
+#endif
+#endif //end version code >= 5.4.0
+#ifdef NOVATECH_PEN_NOTIFIER
+    if (pen_detection_unregister_client(&ts->pen_notif))
+        NVT_ERR("Error occurred while unregistering pen_notifier.\n");
+err_register_pen_notif_failed:
 #endif
 #if NVT_TOUCH_MP
 nvt_mp_proc_deinit();
@@ -2226,6 +2612,11 @@ err_register_charger_notify_failed:
 err_charger_detection_alloc_failed:
 err_charger_notify_wq_failed:
 	free_irq(client->irq, ts);
+#ifdef NVT_SENSOR_EN
+#ifndef CONFIG_HAS_WAKELOCK
+err_wakeup_source_register_failed:
+#endif
+#endif
 err_int_request_failed:
 	input_unregister_device(ts->input_dev);
 	ts->input_dev = NULL;
@@ -2243,6 +2634,16 @@ err_gpio_config_failed:
 err_spi_setup:
 err_ckeck_full_duplex:
 	spi_set_drvdata(client, NULL);
+	if (ts->rbuf) {
+		kfree(ts->rbuf);
+		ts->rbuf = NULL;
+	}
+err_malloc_rbuf:
+	if (ts->xbuf) {
+		kfree(ts->xbuf);
+		ts->xbuf = NULL;
+	}
+err_malloc_xbuf:
 	if (ts) {
 		kfree(ts);
 		ts = NULL;
@@ -2262,6 +2663,15 @@ static int32_t nvt_ts_remove(struct spi_device *client)
 	NVT_LOG("Removing driver...\n");
 
 	nvt_fw_class_init(false);
+
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)) || defined(NVT_CONFIG_DRM_PANEL))
+#if defined(CONFIG_DRM)
+	if (active_panel) {
+		drm_panel_notifier_unregister(active_panel, &ts->drm_notif);
+		NVT_ERR("Error occurred while unregistering drm_notifier.\n");
+	}
+#endif
+#else //vension code < 5.4.0
 #if defined(CONFIG_FB)
 #ifdef _MSM_DRM_NOTIFY_H_
 	if (msm_drm_unregister_client(&ts->drm_notif))
@@ -2277,6 +2687,11 @@ static int32_t nvt_ts_remove(struct spi_device *client)
 #ifdef NVT_CONFIG_PANEL_NOTIFICATIONS
 	if (unregister_panel_notifier(&ts->panel_notif))
 		NVT_ERR("Error occurred while unregistering panel_notifier.\n");
+#endif
+#endif //end version code >= 5.4.0
+#ifdef NOVATECH_PEN_NOTIFIER
+    if (pen_detection_unregister_client(&ts->pen_notif))
+        NVT_ERR("Error occurred while unregistering pen_notifier.\n");
 #endif
 
 #if NVT_TOUCH_MP
@@ -2314,7 +2729,7 @@ static int32_t nvt_ts_remove(struct spi_device *client)
 
 #if WAKEUP_GESTURE
 	device_init_wakeup(&ts->input_dev->dev, 0);
-#ifdef NVT_CONFIG_PANEL_NOTIFICATIONS
+#if defined(NVT_CONFIG_PANEL_NOTIFICATIONS) || defined(NVT_SET_TOUCH_STATE)
 	touch_set_state(TOUCH_DEEP_SLEEP_STATE, TOUCH_PANEL_IDX_PRIMARY);
 #endif
 #endif
@@ -2348,6 +2763,14 @@ static void nvt_ts_shutdown(struct spi_device *client)
 
 	nvt_irq_enable(false);
 
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)) || defined(NVT_CONFIG_DRM_PANEL))
+#if defined(CONFIG_DRM)
+	if (active_panel) {
+		drm_panel_notifier_unregister(active_panel, &ts->drm_notif);
+		NVT_ERR("Error occurred while unregistering drm_notifier.\n");
+	}
+#endif
+#else //vension code < 5.4.0
 #if defined(CONFIG_FB)
 #ifdef _MSM_DRM_NOTIFY_H_
 	if (msm_drm_unregister_client(&ts->drm_notif))
@@ -2364,7 +2787,7 @@ static void nvt_ts_shutdown(struct spi_device *client)
 	if (unregister_panel_notifier(&ts->panel_notif))
 		NVT_ERR("Error occurred while unregistering panel_notifier.\n");
 #endif
-
+#endif //end version code >= 5.4.0
 #if NVT_TOUCH_MP
 	nvt_mp_proc_deinit();
 #endif
@@ -2481,6 +2904,10 @@ static int32_t nvt_ts_suspend(struct device *dev)
 #if MT_PROTOCOL_B
 	for (i = 0; i < ts->max_touch_num; i++) {
 		input_mt_slot(ts->input_dev, i);
+#ifdef PALM_GESTURE_RANGE
+		input_report_abs(ts->input_dev, ABS_MT_TOUCH_MINOR, 0);
+		input_report_abs(ts->input_dev, ABS_MT_ORIENTATION, 0);
+#endif
 		input_report_abs(ts->input_dev, ABS_MT_TOUCH_MAJOR, 0);
 		input_report_abs(ts->input_dev, ABS_MT_PRESSURE, 0);
 		input_mt_report_slot_state(ts->input_dev, MT_TOOL_FINGER, 0);
@@ -2576,6 +3003,69 @@ static int32_t nvt_ts_resume(struct device *dev)
 	return 0;
 }
 
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)) || defined(NVT_CONFIG_DRM_PANEL))
+#if defined(CONFIG_DRM)
+#ifdef LCM_FAST_LIGHTUP
+static void nova_resume_work_func(struct work_struct *work)
+{
+	NVT_LOG("%s\n", __func__);
+	nvt_ts_resume(&ts->client->dev);
+}
+#endif //end LCM_FAST_LIGHTUP
+
+static int nvt_drm_notifier_callback(struct notifier_block *self, unsigned long event, void *data)
+{
+	struct msm_drm_notifier *evdata = data;
+	int *blank;
+	struct nvt_ts_data *ts =
+		container_of(self, struct nvt_ts_data, drm_notif);
+
+	NVT_LOG("nvt_drm_notifier_callback start\n");
+	if (!evdata)
+		return 0;
+
+	if (!(event == MSM_DRM_EARLY_EVENT_BLANK ||
+		event == MSM_DRM_EVENT_BLANK)) {
+		NVT_LOG("event(%lu) do not need process\n", event);
+		return 0;
+	}
+
+	blank = evdata->data;
+	NVT_LOG("event=%lu, *blank=%d\n", event, *blank);
+	if (event == MSM_DRM_EARLY_EVENT_BLANK) {
+		if (*blank == MSM_DRM_BLANK_POWERDOWN) {
+			NVT_LOG("event=%lu, *blank=%d\n", event, *blank);
+			nvt_ts_suspend(&ts->client->dev);
+#if defined(NVT_SENSOR_EN) && defined(NVT_SET_TOUCH_STATE)
+			if (ts->should_enable_gesture) {
+				NVT_LOG("double tap gesture suspend\n");
+				touch_set_state(TOUCH_LOW_POWER_STATE, TOUCH_PANEL_IDX_PRIMARY);
+			} else {
+				touch_set_state(TOUCH_DEEP_SLEEP_STATE, TOUCH_PANEL_IDX_PRIMARY);
+			}
+#endif
+		}
+	} else if (event == MSM_DRM_EVENT_BLANK) {
+		if (*blank == MSM_DRM_BLANK_UNBLANK) {
+			NVT_LOG("event=%lu, *blank=%d\n", event, *blank);
+#ifdef LCM_FAST_LIGHTUP
+			if (nvt_fwu_wq) {
+				queue_work(nvt_fwu_wq, &ts_resume_work);
+				NVT_LOG("LCM_FAST_LIGHTUP, queue_work\n");
+			} else {
+				NVT_LOG("nvt_fwu_wq null");
+				nvt_ts_resume(&ts->client->dev);
+			}
+#else
+			nvt_ts_resume(&ts->client->dev);
+#endif //LCM_FAST_LIGHTUP
+		}
+	}
+
+	return 0;
+}
+#endif
+#else //vension code < 5.4.0
 #ifdef NVT_CONFIG_PANEL_NOTIFICATIONS
 static int nvt_panel_notifier_callback(struct notifier_block *self, unsigned long event, void *data)
 {
@@ -2694,6 +3184,7 @@ static void nvt_ts_late_resume(struct early_suspend *h)
 	nvt_ts_resume(ts->client);
 }
 #endif
+#endif //version code >= 5.4.0
 
 static const struct spi_device_id nvt_ts_id[] = {
 	{ NVT_SPI_NAME, 0 },
@@ -2874,5 +3365,8 @@ static void __exit nvt_driver_exit(void)
 module_init(nvt_driver_init);
 module_exit(nvt_driver_exit);
 
+#if KERNEL_VERSION(5, 4, 0) <= LINUX_VERSION_CODE
+MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
+#endif
 MODULE_DESCRIPTION("Novatek Touchscreen Driver");
 MODULE_LICENSE("GPL");

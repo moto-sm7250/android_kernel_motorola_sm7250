@@ -14,6 +14,7 @@ struct sec_ts_data *tsp_info;
 
 #include "sec_ts.h"
 #include "sec_mmi.h"
+#include <linux/mmi_device.h>
 
 struct sec_ts_data *ts_dup;
 
@@ -781,7 +782,7 @@ static void sec_ts_read_event(struct sec_ts_data *ts)
 
 					if (ts->coord[t_id].action == SEC_TS_COORDINATE_ACTION_RELEASE) {
 
-						do_gettimeofday(&ts->time_released[t_id]);
+						GET_TIME_OF_DAY(&ts->time_released[t_id]);
 
 						if (ts->time_longest < (ts->time_released[t_id].tv_sec - ts->time_pressed[t_id].tv_sec))
 							ts->time_longest = (ts->time_released[t_id].tv_sec - ts->time_pressed[t_id].tv_sec);
@@ -827,7 +828,7 @@ static void sec_ts_read_event(struct sec_ts_data *ts)
 
 
 					} else if (ts->coord[t_id].action == SEC_TS_COORDINATE_ACTION_PRESS) {
-						do_gettimeofday(&ts->time_pressed[t_id]);
+						GET_TIME_OF_DAY(&ts->time_pressed[t_id]);
 
 						ts->touch_count++;
 						ts->all_finger_count++;
@@ -949,7 +950,7 @@ static void sec_ts_read_event(struct sec_ts_data *ts)
 					/* call class method */
 					ret = ts->imports->report_gesture(&event);
 					if (!ret)
-						__pm_wakeup_event(ts->gesture_wakelock, 3000);
+						PM_WAKEUP_EVENT(ts->gesture_wakelock, 3000);
 				}
 #endif
 				break;
@@ -1737,6 +1738,11 @@ static int sec_ts_probe(struct i2c_client *client, const struct i2c_device_id *i
 		return -EIO;
 	}
 
+	if (client->dev.of_node && !mmi_device_is_available(client->dev.of_node)) {
+		input_err(true, &client->dev, "%s mmi: device not supported\n", __func__);
+		return -ENODEV;
+	}
+
 	/* parse dt */
 	if (client->dev.of_node) {
 		pdata = devm_kzalloc(&client->dev,
@@ -1831,23 +1837,14 @@ static int sec_ts_probe(struct i2c_client *client, const struct i2c_device_id *i
 	mutex_init(&ts->eventlock);
 	mutex_init(&ts->modechange);
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 110))
-	ts->wakelock = wakeup_source_register(ts->dev, "tsp_wakelock");
-#else
-	ts->wakelock = wakeup_source_register("tsp_wakelock");
-#endif
+	PM_WAKEUP_REGISTER(ts->dev, ts->wakelock, "tsp_wakelock");
 	if (!ts->wakelock) {
 		input_err(true, &ts->client->dev,
 				"%s: allocate wakeup source err!\n", __func__);
 		ret = -ENOMEM;
 		goto err_register_wakelock;
         }
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 110))
-	ts->gesture_wakelock = wakeup_source_register
-				(ts->dev, "tsp_gesture_wakelock");
-#else
-	ts->gesture_wakelock = wakeup_source_register("tsp_gesture_wakelock");
-#endif
+	PM_WAKEUP_REGISTER(ts->dev, ts->gesture_wakelock, "tsp_gesture_wakelock");
 	if (!ts->gesture_wakelock) {
 		input_err(true, &ts->client->dev,
 				"%s: allocate gesture wakeup source err!\n", __func__);
@@ -1967,9 +1964,9 @@ err_irq:
 	}
 err_input_register_device:
 	kfree(ts->pFrame);
-	wakeup_source_unregister(ts->gesture_wakelock);
+	PM_WAKEUP_UNREGISTER(ts->gesture_wakelock);
 err_register_gesture_wakelock:
-	wakeup_source_unregister(ts->wakelock);
+	PM_WAKEUP_UNREGISTER(ts->wakelock);
 err_register_wakelock:
 	sec_ts_power(ts, false);
 	if (ts->plat_data->support_dex) {
@@ -2026,7 +2023,7 @@ void sec_ts_unlocked_release_all_finger(struct sec_ts_data *ts)
 					ts->cal_status, ts->tspid_val,
 					ts->tspicid_val, ts->coord[i].palm_count);
 
-			do_gettimeofday(&ts->time_released[i]);
+			GET_TIME_OF_DAY(&ts->time_released[i]);
 			
 			if (ts->time_longest < (ts->time_released[i].tv_sec - ts->time_pressed[i].tv_sec))
 				ts->time_longest = (ts->time_released[i].tv_sec - ts->time_pressed[i].tv_sec);
@@ -2078,7 +2075,7 @@ void sec_ts_locked_release_all_finger(struct sec_ts_data *ts)
 					ts->plat_data->img_version_of_ic[3],
 					ts->cal_status, ts->tspid_val, ts->tspicid_val, ts->coord[i].palm_count);
 
-			do_gettimeofday(&ts->time_released[i]);
+			GET_TIME_OF_DAY(&ts->time_released[i]);
 			
 			if (ts->time_longest < (ts->time_released[i].tv_sec - ts->time_pressed[i].tv_sec))
 				ts->time_longest = (ts->time_released[i].tv_sec - ts->time_pressed[i].tv_sec);
@@ -2124,7 +2121,7 @@ static void sec_ts_reset_work(struct work_struct *work)
 	}
 
 	mutex_lock(&ts->modechange);
-	__pm_stay_awake(ts->wakelock);
+	PM_STAY_AWAKE(ts->wakelock);
 
 	ts->reset_is_on_going = true;
 	input_info(true, &ts->client->dev, "%s\n", __func__);
@@ -2141,7 +2138,7 @@ static void sec_ts_reset_work(struct work_struct *work)
 		schedule_delayed_work(&ts->reset_work, msecs_to_jiffies(TOUCH_RESET_DWORK_TIME));
 		mutex_unlock(&ts->modechange);
 
-		__pm_relax(ts->wakelock);
+		PM_RELAX(ts->wakelock);
 
 		return;
 	}
@@ -2157,7 +2154,7 @@ static void sec_ts_reset_work(struct work_struct *work)
 				cancel_delayed_work(&ts->reset_work);
 				schedule_delayed_work(&ts->reset_work, msecs_to_jiffies(TOUCH_RESET_DWORK_TIME));
 				mutex_unlock(&ts->modechange);
-				__pm_relax(ts->wakelock);
+				PM_RELAX(ts->wakelock);
 				return;
 			}
 		} else {
@@ -2188,7 +2185,7 @@ static void sec_ts_reset_work(struct work_struct *work)
 	ts->reset_is_on_going = false;
 	mutex_unlock(&ts->modechange);
 
-	__pm_relax(ts->wakelock);
+	PM_RELAX(ts->wakelock);
 }
 #endif
 
@@ -2400,8 +2397,8 @@ static int sec_ts_remove(struct i2c_client *client)
 	p_ghost_check = NULL;
 #endif
 	device_init_wakeup(&client->dev, false);
-	wakeup_source_unregister(ts->gesture_wakelock);
-	wakeup_source_unregister(ts->wakelock);
+	PM_WAKEUP_UNREGISTER(ts->gesture_wakelock);
+	PM_WAKEUP_UNREGISTER(ts->wakelock);
 
 	ts->lowpower_mode = false;
 	ts->probe_done = false;
@@ -2691,6 +2688,9 @@ static void __exit sec_ts_exit(void)
 }
 
 MODULE_AUTHOR("Hyobae, Ahn<hyobae.ahn@samsung.com>");
+#if KERNEL_VERSION(5, 4, 0) <= LINUX_VERSION_CODE
+MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
+#endif
 MODULE_DESCRIPTION("Samsung Electronics TouchScreen driver");
 MODULE_LICENSE("GPL");
 

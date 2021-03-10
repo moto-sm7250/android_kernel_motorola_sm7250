@@ -23,12 +23,18 @@
 #include <linux/of.h>
 #include <linux/spi/spi.h>
 #include <linux/uaccess.h>
+#include <linux/version.h>
+#include <linux/mmi_kernel_common.h>
+
 #ifdef NVT_SENSOR_EN
 #include <linux/sensors.h>
 #endif
 
 #ifdef NVT_CONFIG_PANEL_NOTIFICATIONS
 #include <linux/panel_notifier.h>
+#endif
+#ifdef NOVATECH_PEN_NOTIFIER
+#include <linux/pen_detection_notify.h>
 #endif
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
@@ -46,6 +52,8 @@
 #include <linux/platform_data/spi-mt65xx.h>
 #endif
 
+#include <linux/mmi_wake_lock.h>
+
 #define NVT_DEBUG 1
 
 //---GPIO number---
@@ -61,6 +69,7 @@
 
 //---SPI driver info.---
 #define NVT_SPI_NAME "NVT-ts"
+#define NVT_PRIMARY_NAME "primary"
 
 #if NVT_DEBUG
 #define NVT_LOG(fmt, args...)    pr_err("[%s] %s %d: " fmt, NVT_SPI_NAME, __func__, __LINE__, ##args)
@@ -76,13 +85,23 @@
 //---Touch info.---
 #define TOUCH_COORDS_ARR_SIZE	2
 #define TOUCH_DEFAULT_MAX_WIDTH 720
-#define TOUCH_DEFAULT_MAX_HEIGHT 1560
+#define TOUCH_DEFAULT_MAX_HEIGHT 1600
 #define TOUCH_MAX_FINGER_NUM 10
 #define TOUCH_KEY_NUM 0
 #if TOUCH_KEY_NUM > 0
 extern const uint16_t touch_key_array[TOUCH_KEY_NUM];
 #endif
 #define TOUCH_FORCE_NUM 1000
+#ifdef PALM_GESTURE
+#define PALM_HAND_HOLDE 900
+#define PALM_HANG 1000
+#ifdef PALM_GESTURE_RANGE
+#define TOUCH_ORIENTATION_MIN 0
+#define TOUCH_ORIENTATION_MAX 90
+#define PANEL_REAL_WIDTH 7096
+#define PANEL_REAL_HEIGHT 15768
+#endif
+#endif
 
 /* Enable only when module have tp reset pin and connected to host */
 #define NVT_TOUCH_SUPPORT_HW_RST 0
@@ -105,11 +124,19 @@ extern const uint16_t gesture_key_array[];
 #define MP_UPDATE_FIRMWARE_NAME   "novatek_ts_mp.bin"
 #define POINT_DATA_CHECKSUM 1
 #define POINT_DATA_CHECKSUM_LEN 65
-
+#define NVT_FILE_NAME_LENGTH                    128
 //---ESD Protect.---
+#ifdef NVT_CONFIG_ESD_ENABLE
+#define NVT_TOUCH_ESD_PROTECT 1
+#else
 #define NVT_TOUCH_ESD_PROTECT 0
+#endif
 #define NVT_TOUCH_ESD_CHECK_PERIOD 1500	/* ms */
 #define NVT_TOUCH_WDT_RECOVERY 1
+
+#if NVT_TOUCH_ESD_PROTECT
+extern struct delayed_work nvt_esd_check_work;
+#endif
 
 #ifdef NVT_SENSOR_EN
 /* display state */
@@ -146,18 +173,7 @@ struct nvt_ts_data {
 	struct delayed_work nvt_fwu_work;
 	uint16_t addr;
 	int8_t phys[32];
-#if defined(CONFIG_FB)
-#ifdef _MSM_DRM_NOTIFY_H_
-	struct notifier_block drm_notif;
-#else
-	struct notifier_block fb_notif;
-#endif
-#elif defined(CONFIG_HAS_EARLYSUSPEND)
-	struct early_suspend early_suspend;
-#endif
-#ifdef NVT_CONFIG_PANEL_NOTIFICATIONS
-	struct notifier_block panel_notif;
-#endif
+
 	uint8_t fw_ver;
 	uint8_t x_num;
 	uint8_t y_num;
@@ -175,10 +191,11 @@ struct nvt_ts_data {
 	uint8_t carrier_system;
 	uint8_t hw_crc;
 	uint16_t nvt_pid;
-	uint8_t rbuf[1025];
+	uint8_t *rbuf;
 	uint8_t *xbuf;
 	struct mutex xbuf_lock;
 	bool irq_enabled;
+	const char *panel_supplier;
 #ifdef CONFIG_MTK_SPI
 	struct mt_chip_conf spi_ctrl;
 #endif
@@ -192,14 +209,40 @@ struct nvt_ts_data {
 	bool wakeable;
 	bool should_enable_gesture;
 	bool gesture_enabled;
+#ifdef NOVATECH_PEN_NOTIFIER
+	bool fw_ready_flag;
+	int nvt_pen_detect_flag;
+	struct notifier_block pen_notif;
+#endif
 	enum display_state screen_state;
 	struct mutex state_mutex;
 	struct nvt_sensor_platform_data *sensor_pdata;
+#endif
+#ifdef PALM_GESTURE
+	bool palm_enabled;
 #endif
 	char product_id[10];
 	uint8_t fw_type;
 	uint32_t build_id;
 	uint32_t config_id;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0))
+#if defined(CONFIG_DRM)
+	struct notifier_block drm_notif;
+#endif
+#else //vension code < 5.4.0
+#if defined(CONFIG_FB)
+#ifdef _MSM_DRM_NOTIFY_H_
+	struct notifier_block drm_notif;
+#else
+	struct notifier_block fb_notif;
+#endif
+#elif defined(CONFIG_HAS_EARLYSUSPEND)
+	struct early_suspend early_suspend;
+#endif
+#ifdef NVT_CONFIG_PANEL_NOTIFICATIONS
+	struct notifier_block panel_notif;
+#endif
+#endif //version code >= 5.4.0
 };
 
 #if NVT_TOUCH_PROC
@@ -224,12 +267,26 @@ typedef enum {
     EVENT_MAP_PROJECTID                     = 0x9A,
 } SPI_EVENT_MAP;
 
+#ifdef NVT_SET_TOUCH_STATE
+#define MAX_PANEL_IDX 2
+enum touch_panel_id {
+	TOUCH_PANEL_IDX_PRIMARY = 0,
+	TOUCH_PANEL_MAX_IDX,
+};
+
+enum touch_state {
+	TOUCH_DEEP_SLEEP_STATE = 0,
+	TOUCH_LOW_POWER_STATE,
+};
+#endif
+
 //---SPI READ/WRITE---
 #define SPI_WRITE_MASK(a)	(a | 0x80)
 #define SPI_READ_MASK(a)	(a & 0x7F)
 
 #define DUMMY_BYTES (1)
 #define NVT_TRANSFER_LEN	(63*1024)
+#define NVT_READ_LEN		(2*1024)
 
 typedef enum {
 	NVTWRITE = 0,
@@ -238,6 +295,9 @@ typedef enum {
 
 //---extern structures---
 extern struct nvt_ts_data *ts;
+
+extern char *nvt_boot_firmware_name;
+extern char *nvt_mp_firmware_name;
 
 //---extern functions---
 int32_t CTP_SPI_READ(struct spi_device *client, uint8_t *buf, uint16_t len);
@@ -256,8 +316,17 @@ int32_t nvt_clear_fw_status(void);
 int32_t nvt_check_fw_status(void);
 int32_t nvt_set_page(uint32_t addr);
 int32_t nvt_write_addr(uint32_t addr, uint8_t data);
+#ifdef NVT_SET_TOUCH_STATE
+int touch_set_state(int state, int panel_idx);
+int check_touch_state(int *state, int panel_idx);
+#endif
 #if NVT_TOUCH_ESD_PROTECT
 extern void nvt_esd_check_enable(uint8_t enable);
 #endif /* #if NVT_TOUCH_ESD_PROTECT */
-
+#ifdef NOVATECH_PEN_NOTIFIER
+extern int nvt_mcu_pen_detect_set(uint8_t pen_detect);
+#endif
+#ifdef PALM_GESTURE
+extern int nvt_palm_set(bool enabled);
+#endif
 #endif /* _LINUX_NVT_TOUCH_H */

@@ -28,7 +28,6 @@
 #include <linux/of_gpio.h>
 #include <linux/time.h>
 #include <linux/vmalloc.h>
-#include <soc/qcom/mmi_boot_info.h>
 #include <linux/touchscreen_mmi.h>
 
 #include "sec_ts.h"
@@ -127,7 +126,7 @@ static int sec_mmi_extend_attribute_group(struct device *dev, struct attribute_g
 	if (ts->plat_data->hold_grip_ctrl)
 		ADD_ATTR(hold_grip);
 
-	if (strncmp(bi_bootmode(), "mot-factory", strlen("mot-factory")) == 0) {
+	if (strncmp(mmi_bl_bootmode(), "mot-factory", strlen("mot-factory")) == 0) {
 		ADD_ATTR(address);
 		ADD_ATTR(size);
 		ADD_ATTR(data);
@@ -185,7 +184,7 @@ static void sec_mmi_ic_reset(struct sec_ts_data *ts, int mode)
 		!gpio_get_value(ts->plat_data->rst_gpio))
 		return;
 
-	__pm_stay_awake(ts->wakelock);
+	PM_STAY_AWAKE(ts->wakelock);
 	mutex_lock(&ts->modechange);
 	/* disable irq to ensure getting boot complete */
 	sec_ts_irq_enable(ts, false);
@@ -207,7 +206,7 @@ static void sec_mmi_ic_reset(struct sec_ts_data *ts, int mode)
 	sec_ts_irq_enable(ts, true);
 
 	mutex_unlock(&ts->modechange);
-	__pm_relax(ts->wakelock);
+	PM_RELAX(ts->wakelock);
 
 	dev_dbg(&ts->client->dev, "%s: hw reset done\n", __func__);
 }
@@ -1033,7 +1032,7 @@ static int sec_mmi_firmware_update(struct device *dev, char *fwname) {
 
 	mutex_lock(&ts->modechange);
 	sec_ts_irq_enable(ts, false);
-	__pm_stay_awake(ts->wakelock);
+	PM_STAY_AWAKE(ts->wakelock);
 
 	result = sec_ts_firmware_update(ts, fw_entry->data, fw_entry->size,
 				0, false, 0); /* do not run calibration!!! */
@@ -1044,7 +1043,7 @@ static int sec_mmi_firmware_update(struct device *dev, char *fwname) {
 
 	mutex_unlock(&ts->modechange);
 	sec_ts_irq_enable(ts, true);
-	__pm_relax(ts->wakelock);
+	PM_RELAX(ts->wakelock);
 
 err_request_fw:
 	release_firmware(fw_entry);
@@ -1068,12 +1067,12 @@ static int sec_mmi_firmware_erase(struct device *dev)
 
 	mutex_lock(&ts->modechange);
 	sec_ts_irq_enable(ts, false);
-	__pm_stay_awake(ts->wakelock);
+	PM_STAY_AWAKE(ts->wakelock);
 
 	ts->fw_invalid = true;
 
 	mutex_unlock(&ts->modechange);
-	__pm_relax(ts->wakelock);
+	PM_RELAX(ts->wakelock);
 
 	return 0;
 }

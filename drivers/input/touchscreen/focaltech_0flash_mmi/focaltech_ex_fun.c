@@ -1130,7 +1130,7 @@ static ssize_t doreflash_store(struct device *dev,
     }
 
     memset(fwname, 0, sizeof(fwname));
-    snprintf(fwname, PAGE_SIZE, "%s", buf);
+    scnprintf(fwname, sizeof(fwname), "%s", buf);
     fwname[count - 1] = '\0';
 
     mutex_lock(&input_dev->mutex);

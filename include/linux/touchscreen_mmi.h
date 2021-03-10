@@ -46,6 +46,52 @@
 	(event == PANEL_EVENT_DISPLAY_ON)
 
 #else /* CONFIG_PANEL_NOTIFICATIONS */
+#if defined(CONFIG_DRM_PANEL_NOTIFICATIONS)
+
+#include <drm/drm_panel.h>
+extern struct drm_panel *active_panel;
+
+static inline int register_panel_notifier(struct notifier_block *nb)
+{
+	return drm_panel_notifier_register(active_panel, nb);
+}
+
+static inline void unregister_panel_notifier(struct notifier_block *nb)
+{
+	drm_panel_notifier_unregister(active_panel, nb);
+}
+
+#define GET_CONTROL_DSI_INDEX \
+int *blank; \
+struct drm_panel_notifier *evdata = evd; \
+{ \
+	if (!(evdata && evdata->data)) { \
+		dev_dbg(DEV_MMI, "%s: invalid evdata\n", __func__); \
+		return 0; \
+	} \
+	idx = 0;\
+	blank = (int *)evdata->data; \
+	dev_dbg(DEV_MMI, "%s: drm notification: event = %lu, blank = %d\n", \
+			__func__, event, *blank); \
+}
+
+#define EVENT_PRE_DISPLAY_OFF \
+	((event == DRM_PANEL_EARLY_EVENT_BLANK) && \
+	 (*blank == DRM_PANEL_BLANK_POWERDOWN))
+
+#define EVENT_DISPLAY_OFF \
+	((event == DRM_PANEL_EVENT_BLANK) && \
+	 (*blank == DRM_PANEL_BLANK_POWERDOWN))
+
+#define EVENT_PRE_DISPLAY_ON \
+	((event == DRM_PANEL_EARLY_EVENT_BLANK) && \
+	 (*blank == DRM_PANEL_BLANK_UNBLANK))
+
+#define EVENT_DISPLAY_ON \
+	((event == DRM_PANEL_EVENT_BLANK) && \
+	 (*blank == DRM_PANEL_BLANK_UNBLANK))
+
+#else /* CONFIG_DRM_PANEL_NOTIFICATIONS */
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(4,14,0)
 #if defined(CONFIG_DRM_MSM)
 
@@ -101,6 +147,7 @@ struct msm_drm_notifier *evdata = evd; \
 #define unregister_panel_notifier(...)
 
 #endif /* LINUX_VERSION_CODE */
+#endif /* CONFIG_DRM_PANEL_NOTIFICATIONS */
 #endif /* CONFIG_PANEL_NOTIFICATIONS */
 
 
@@ -168,6 +215,7 @@ struct gesture_event_data {
  */
 struct ts_mmi_class_methods {
 	int     (*report_gesture)(struct gesture_event_data *gev);
+	int     (*report_palm)(bool value);
 	int     (*get_class_fname)(struct device *dev , const char **fname);
 	int     (*report_touch_event)(struct touch_event_data *tev, struct input_dev *input_dev);
 	struct kobject *kobj_notify;
@@ -240,6 +288,7 @@ enum ts_mmi_pm_mode {
 	int	(*pinctrl)(struct device *dev, int on);
 	int	(*refresh_rate)(struct device *dev, int freq);
 	int	(*charger_mode)(struct device *dev, int mode);
+	int	(*palm_set_enable)(struct device *dev, unsigned int enable);
 	int	(*suppression)(struct device *dev, int state);
 	int	(*hold_grip)(struct device *dev, int state);
 	int	(*pill_region)(struct device *dev, int *region_array);
@@ -279,6 +328,7 @@ struct ts_mmi_dev_pdata {
 	bool		usb_detection;
 	bool		update_refresh_rate;
 	bool		gestures_enabled;
+	bool		palm_enabled;
 	bool		suppression_ctrl;
 	bool		pill_region_ctrl;
 	bool		hold_distance_ctrl;
@@ -313,8 +363,9 @@ struct ts_mmi_dev {
 	 */
 	struct device		*dev;
 	struct device		*class_dev;
-	int 			class_dev_minor;
+	dev_t			class_dev_no;
 	int			forcereflash;
+	int			panel_status;
 	struct ts_mmi_dev_pdata	pdata;
 	struct notifier_block	panel_nb;
 	struct mutex		extif_mutex;
@@ -415,11 +466,18 @@ extern void ts_mmi_dev_unregister(struct device *parent);
 extern int ts_mmi_parse_dt(struct ts_mmi_dev *touch_cdev, struct device_node *of_node);
 extern int ts_mmi_gesture_init(struct ts_mmi_dev *data);
 extern int ts_mmi_gesture_remove(struct ts_mmi_dev *data);
+extern int ts_mmi_palm_init(struct ts_mmi_dev *data);
+extern int ts_mmi_palm_remove(struct ts_mmi_dev *data);
 #ifdef TS_MMI_TOUCH_EDGE_GESTURE
 extern int ts_mmi_gesture_suspend(struct ts_mmi_dev *touch_cdev);
 #endif
+#ifdef CONFIG_DRM_PANEL_NOTIFICATIONS
+int ts_mmi_check_drm_panel(struct device_node *of_node);
+#endif
+extern bool ts_mmi_is_panel_match(const char *panel_node, char *touch_ic_name);
 
 /*sensor*/
 extern bool ts_mmi_is_sensor_enable(void);
 
+extern const char *mmi_bl_bootmode(void);
 #endif		/* __LINUX_TOUCHSCREEN_MMI_H_ */

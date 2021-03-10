@@ -36,6 +36,7 @@
 
 #include <linux/input/mt.h>
 #include <linux/interrupt.h>
+#include <linux/mmi_wake_lock.h>
 #include "synaptics_core.h"
 
 #define TYPE_B_PROTOCOL
@@ -715,7 +716,7 @@ static void touch_report(void)
 			event.evdata.y = gesture_data->y_pos;
 			retval = tcm_hcd->imports->report_gesture(&event);
 			if (!retval)
-				__pm_wakeup_event(touch_hcd->gesture_wakelock, 3000);
+				PM_WAKEUP_EVENT(touch_hcd->gesture_wakelock, 3000);
 		}
 	}
 
@@ -729,7 +730,7 @@ static void touch_report(void)
 			event.evdata.y = gesture_data->y_pos;
 			retval = tcm_hcd->imports->report_gesture(&event);
 			if (!retval)
-				__pm_wakeup_event(touch_hcd->gesture_wakelock, 3000);
+				PM_WAKEUP_EVENT(touch_hcd->gesture_wakelock, 3000);
 		}
 	}
 #endif
@@ -760,6 +761,7 @@ static void touch_report(void)
 		switch (status) {
 		case LIFT:
 #ifdef TYPE_B_PROTOCOL
+#if defined(CONFIG_INPUT_TOUCHSCREEN_MMI)
 			if (tcm_hcd->imports && tcm_hcd->imports->report_touch_event) {
 				struct touch_event_data touch_event;
 				memset(&touch_event, 0, sizeof(touch_event));
@@ -773,6 +775,7 @@ static void touch_report(void)
 					 break;
 				}
 			}
+#endif
 			input_mt_slot(touch_hcd->input_dev, idx);
 			input_mt_report_slot_state(touch_hcd->input_dev,
 					MT_TOOL_FINGER, 0);
@@ -799,6 +802,7 @@ static void touch_report(void)
 			if (bdata->y_flip)
 				y = touch_hcd->input_params.max_y - y;
 
+#if defined(CONFIG_INPUT_TOUCHSCREEN_MMI)
 			if (tcm_hcd->imports && tcm_hcd->imports->report_touch_event) {
 				struct touch_event_data touch_event;
 				memset(&touch_event, 0, sizeof(touch_event));
@@ -820,6 +824,7 @@ static void touch_report(void)
 					 break;
 				}
 			}
+#endif
 
 #ifdef TYPE_B_PROTOCOL
 			input_mt_slot(touch_hcd->input_dev, idx);
@@ -1232,13 +1237,8 @@ int touch_init(struct syna_tcm_hcd *tcm_hcd)
 
 	touch_hcd->tcm_hcd = tcm_hcd;
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 110))
-	touch_hcd->gesture_wakelock = wakeup_source_register(
-			&tcm_hcd->pdev->dev, "syna_gesture_wakelock");
-#else
-	touch_hcd->gesture_wakelock = wakeup_source_register(
+	PM_WAKEUP_REGISTER(&tcm_hcd->pdev->dev, touch_hcd->gesture_wakelock,
 			"syna_gesture_wakelock");
-#endif
 	if (!touch_hcd->gesture_wakelock) {
                 LOGE(tcm_hcd->pdev->dev.parent,
                                 "Failed to allocate wakeup source\n");
@@ -1270,7 +1270,7 @@ err_set_input_reporting:
 	RELEASE_BUFFER(touch_hcd->resp);
 	RELEASE_BUFFER(touch_hcd->out);
 
-	wakeup_source_unregister(touch_hcd->gesture_wakelock);
+	PM_WAKEUP_UNREGISTER(touch_hcd->gesture_wakelock);
 	kfree(touch_hcd);
 	touch_hcd = NULL;
 
@@ -1293,7 +1293,7 @@ int touch_remove(struct syna_tcm_hcd *tcm_hcd)
 	RELEASE_BUFFER(touch_hcd->resp);
 	RELEASE_BUFFER(touch_hcd->out);
 
-	wakeup_source_unregister(touch_hcd->gesture_wakelock);
+	PM_WAKEUP_UNREGISTER(touch_hcd->gesture_wakelock);
 	kfree(touch_hcd);
 	touch_hcd = NULL;
 
