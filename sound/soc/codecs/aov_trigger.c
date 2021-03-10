@@ -20,6 +20,7 @@
 #include <linux/string.h>
 #include <linux/sysfs.h>
 #include <sound/soc.h>
+#include <linux/version.h>
 // #include <linux/wakelock.h>
 #include <linux/mfd/madera/core.h>
 #include "madera.h"
@@ -36,7 +37,7 @@ static bool aov_trigger_active;
 static struct kobject aov_trigger_kobj;
 static struct snd_soc_component *aov_component;
 static struct notifier_block aov_trigger_nb;
-static struct wakeup_source aov_wake_src;
+static struct wakeup_source *aov_wake_src;
 
 static struct dsp_event_info dsp_info[MAX_DSP_TO_CHECK];
 static DEFINE_MUTEX(dsp_info_mutex);
@@ -89,7 +90,7 @@ static int aov_trigger_notify(struct notifier_block *nb,
 				"DSP%d: notify aov trigger.", dsp);
 			sysfs_notify(&aov_trigger_kobj, NULL,
 				     aov_sysfs_attr_trigger.name);
-			__pm_wakeup_event(&aov_wake_src, 500);
+			__pm_wakeup_event(aov_wake_src, 500);
 			break;
 		case MADERA_TRIGGER_TEXT:
 			mutex_lock(&dsp_info_mutex);
@@ -253,7 +254,17 @@ static int aov_trigger_probe(struct platform_device *pdev)
 		goto exit_remove_register;
 	}
 
-	wakeup_source_init(&aov_wake_src, "aov_wakelock");
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 110))
+	aov_wake_src = wakeup_source_register(&pdev->dev, "aov_wakelock");
+#else
+	aov_wake_src = wakeup_source_register("aov_wakelock");
+#endif
+	if (!aov_wake_src) {
+		dev_err(&pdev->dev,
+			"%s: failed to allocate wakeup source\n",
+			__func__);
+		goto exit_remove_register;
+	}
 
 	goto exit;
 
@@ -274,7 +285,7 @@ static int aov_trigger_remove(struct platform_device *pdev)
 	sysfs_remove_file(&aov_trigger_kobj, &aov_sysfs_attr_event);
 	sysfs_remove_file(&aov_trigger_kobj, &aov_sysfs_attr_register);
 	sysfs_remove_file(&aov_trigger_kobj, &aov_sysfs_attr_trigger);
-	wakeup_source_trash(&aov_wake_src);
+	wakeup_source_unregister(aov_wake_src);
 	kobject_del(&aov_trigger_kobj);
 	return 0;
 }
