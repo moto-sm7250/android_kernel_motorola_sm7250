@@ -4,6 +4,9 @@ endif
 ifneq ($(filter m y,$(CONFIG_INPUT_NOVA_PANEL_NOTIFICATIONS)),)
 	ccflags-y += -DNVT_CONFIG_PANEL_NOTIFICATIONS
 endif
+ifneq ($(filter m y,$(CONFIG_INPUT_NOVA_PANEL_ESD_ENABLE)),)
+	ccflags-y += -DNVT_ESD_ENABLE
+endif
 
 nova_0flash_mmi-y += nt36xxx.o
 nova_0flash_mmi-y += nt36xxx_ext_proc.o

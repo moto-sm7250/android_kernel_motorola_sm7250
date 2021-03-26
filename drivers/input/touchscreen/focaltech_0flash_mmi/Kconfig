@@ -65,3 +65,11 @@ config TOUCHSCREEN_FTS_0FLASH_MMI_PEN_NOTIFIER
 	help
 	  Say Y here to enable support for Pen notifier functionality on Focaltech touch panel.
 	  If unsure, say N.
+
+config TOUCHSCREEN_FTS_0FLASH_MMI_ESD_ENABLE
+	bool "Moto Focaltech ESD Detection"
+	depends on TOUCHSCREEN_FTS_0FLASH_MMI
+	default n
+	help
+	  Say Y here if you want to have ESD Detection support on Moto Focaltech touch panel.
+	  If unsure, say N.

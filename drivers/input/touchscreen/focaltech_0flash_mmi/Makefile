@@ -47,3 +47,6 @@ endif
 ifneq ($(filter m y,$(CONFIG_TOUCHSCREEN_FTS_0FLASH_MMI_PEN_NOTIFIER)),)
 	ccflags-y += -DFOCALTECH_PEN_NOTIFIER
 endif
+ifneq ($(filter m y,$(CONFIG_TOUCHSCREEN_FTS_0FLASH_MMI_ESD_ENABLE)),)
+	ccflags-y += -DFOCALTECH_ESD_EN
+endif
