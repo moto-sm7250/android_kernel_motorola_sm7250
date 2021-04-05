@@ -10,7 +10,7 @@ config TOUCHSCREEN_FTS_0FLASH_MMI
 	  Say Y here if you have Moto Focaltech touch panel.
 	  If unsure, say N.
 
-config TOUCHSCREEN_FTS_0FLASH_MMI_IC_NAME_FT8719
+config INPUT_FOCALTECH_0FLASH_MMI_IC_NAME_FT8719
 	bool "Focaltech Chip FT8719"
 	depends on TOUCHSCREEN_FTS_0FLASH_MMI
 	default n
@@ -18,7 +18,7 @@ config TOUCHSCREEN_FTS_0FLASH_MMI_IC_NAME_FT8719
 	  Say Y here to enable support for Focaltech FT8719 touch panel.
 	  If unsure, say N.
 
-config TOUCHSCREEN_FTS_0FLASH_MMI_IC_NAME_FT8756
+config INPUT_FOCALTECH_0FLASH_MMI_IC_NAME_FT8756
 	bool "Focaltech Chip FT8756"
 	depends on TOUCHSCREEN_FTS_0FLASH_MMI
 	default n
@@ -26,7 +26,7 @@ config TOUCHSCREEN_FTS_0FLASH_MMI_IC_NAME_FT8756
 	  Say Y here to enable support for Focaltech FT8756 touch panel.
 	  If unsure, say N.
 
-config TOUCHSCREEN_FTS_0FLASH_MMI_IC_NAME_FT8006S_AA
+config INPUT_FOCALTECH_0FLASH_MMI_IC_NAME_FT8006S_AA
 	bool "Focaltech Chip FT8006S_AA"
 	depends on TOUCHSCREEN_FTS_0FLASH_MMI
 	default n
@@ -34,7 +34,7 @@ config TOUCHSCREEN_FTS_0FLASH_MMI_IC_NAME_FT8006S_AA
 	  Say Y here to enable support for Focaltech FT8006S_AA touch panel.
 	  If unsure, say N.
 
-config TOUCHSCREEN_FTS_0FLASH_MMI_IC_NAME_FT8009
+config INPUT_FOCALTECH_0FLASH_MMI_IC_NAME_FT8009
 	bool "Focaltech Chip FT8009"
 	depends on TOUCHSCREEN_FTS_0FLASH_MMI
 	default n
