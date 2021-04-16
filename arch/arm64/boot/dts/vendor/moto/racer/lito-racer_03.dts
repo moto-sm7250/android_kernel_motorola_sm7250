@@ -7377,8 +7377,8 @@
 				qcom,mdss-dsi-panel-status-value = <0x9c>;
 				qcom,mdss-dsi-panel-status-read-length = <0x1>;
 				qcom,bklt-dcs-2bytes-enabled;
-				qcom,mdss-dsi-bl-min-level = <0x3>;
-				qcom,mdss-dsi-bl-max-level = <0x640>;
+				qcom,mdss-dsi-bl-min-level = <0x10>;
+				qcom,mdss-dsi-bl-max-level = <0x7ff>;
 				qcom,mdss-dsi-bl-pmic-control-type = "bl_ctrl_dcs";
 				qcom,mdss-dsi-hbm-on-command = [39 01 00 00 00 00 03 51 0f ff];
 				qcom,mdss-dsi-hbm-off-command = [39 01 00 00 00 00 03 51 06 40];
@@ -7520,8 +7520,8 @@
 				qcom,mdss-dsi-panel-status-value = <0x9c>;
 				qcom,mdss-dsi-panel-status-read-length = <0x1>;
 				qcom,bklt-dcs-2bytes-enabled;
-				qcom,mdss-dsi-bl-min-level = <0x3>;
-				qcom,mdss-dsi-bl-max-level = <0x640>;
+				qcom,mdss-dsi-bl-min-level = <0x10>;
+				qcom,mdss-dsi-bl-max-level = <0x7ff>;
 				qcom,mdss-dsi-bl-pmic-control-type = "bl_ctrl_dcs";
 				qcom,mdss-dsi-hbm-on-command = [39 01 00 00 00 00 03 51 0f ff];
 				qcom,mdss-dsi-hbm-off-command = [39 01 00 00 00 00 03 51 06 40];
