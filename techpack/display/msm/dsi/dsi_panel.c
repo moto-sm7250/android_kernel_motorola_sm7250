@@ -1069,6 +1069,19 @@ static int dsi_panel_set_hbm(struct dsi_panel *panel,
 	int rc = 0;
 
 	pr_info("Set HBM to (%d)\n", param_info->value);
+	struct panel_param *panel_param;
+
+	panel_param = &panel->param_cmds[param_info->param_idx];
+	if (!panel_param) {
+		DSI_ERR("%s: invalid panel_param.\n", __func__);
+		return -EINVAL;
+	}
+	if (panel_param->value == param_info->value)
+	{
+		DSI_INFO("(mode=%d): requested value=%d is same. Do nothing\n",
+				param_info->param_idx, param_info->value);
+		return 0;
+	}
 
 	rc = dsi_panel_send_param_cmd(panel, param_info);
 	if (rc < 0) {
