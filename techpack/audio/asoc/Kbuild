@@ -79,7 +79,7 @@ ifeq ($(KERNEL_BUILD), 0)
 	ifneq (,$(filter nairo%, $(TARGET_PRODUCT)))
 		INCS    +=  -include $(AUDIO_ROOT)/config/litonairo_asoc.h
         endif
-	ifneq (,$(filter smith%, $(TARGET_PRODUCT)))
+	ifeq ($(CONFIG_SMITH_DTB), y)
 		INCS    +=  -include $(AUDIO_ROOT)/config/litosmith.h
 	endif
 endif
@@ -139,7 +139,7 @@ endif
 
 ifdef CONFIG_SND_SOC_LITO
 # Separate machine driver for Smith/Racer
-ifneq (,$(filter smith%, $(TARGET_PRODUCT)))
+ifeq ($(CONFIG_SMITH_DTB), y)
 	MACHINE_OBJS += kona-smith.o
 else
 	MACHINE_OBJS += kona.o
