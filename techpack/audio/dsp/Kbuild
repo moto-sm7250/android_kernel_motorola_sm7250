@@ -127,7 +127,7 @@ ifneq ($(filter m y,$(CONFIG_CIRRUS_PLAYBACK)),)
 endif
 
 ifeq ($(TARGET_BUILD_VARIANT),userdebug)
-ifneq (,$(filter racer%, $(TARGET_PRODUCT)))
+ifeq ($(CONFIG_RACER_DTB), y)
     EXTRA_CFLAGS += -DADSP_RESTART_DEBUG
 endif
 endif

@@ -76,7 +76,7 @@ ifeq ($(KERNEL_BUILD), 0)
 		export
 		INCS    +=  -include $(AUDIO_ROOT)/config/gvmautoconf.h
 	endif
-	ifneq (,$(filter nairo%, $(TARGET_PRODUCT)))
+	ifeq ($(CONFIG_NAIRO_DTB), y)
 		INCS    +=  -include $(AUDIO_ROOT)/config/litonairo_asoc.h
         endif
 	ifeq ($(CONFIG_SMITH_DTB), y)
