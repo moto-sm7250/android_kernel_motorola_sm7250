@@ -3,6 +3,7 @@
 #
 config TOUCHSCREEN_NT36xxx_HOSTDL_SPI_MMI
 	tristate "Moto Novatek NT36xxx host download SPI driver"
+	depends on SPI
 	default n
 	help
 	  Say Y here if you have a Moto Novatek NT36xxx no flash touchscreen connected
