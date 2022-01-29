@@ -8,6 +8,7 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 
+#include <linux/input.h>
 #include <linux/io.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
@@ -17,6 +18,8 @@
 #include <linux/delay.h>
 #include <linux/input/qpnp-power-on.h>
 #include <linux/of_address.h>
+#include <linux/reboot.h>
+#include <linux/slab.h>
 
 #include <asm/cacheflush.h>
 #include <asm/system_misc.h>
@@ -73,6 +76,12 @@ static void *emergency_dload_mode_addr;
 static bool scm_dload_supported;
 
 static bool force_warm_reboot;
+
+struct work_struct reboot_work;
+struct input_handler handler;
+bool power_pressed;
+bool vol_down_pressed;
+bool vol_up_pressed;
 
 /* interface for exporting attributes */
 struct reset_attribute {
@@ -532,6 +541,11 @@ static void msm_restart_prepare(const char *cmd)
 			qpnp_pon_set_restart_reason(
 				PON_RESTART_REASON_RECOVERY);
 			__raw_writel(0x77665502, restart_reason);
+		} else if (!strncmp(cmd, "longpress", 9)) {
+			qpnp_pon_set_restart_reason(
+				PON_RESTART_REASON_RECOVERY);
+			__raw_writel(0x77665502, restart_reason);
+			qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
 		} else if (!strcmp(cmd, "rtc")) {
 			qpnp_pon_set_restart_reason(
 				PON_RESTART_REASON_RTC);
@@ -671,6 +685,91 @@ static void do_msm_poweroff(void)
 	pr_err("Powering off has failed\n");
 }
 
+static void reboot_work_func(struct work_struct *work)
+{
+	kernel_restart("longpress");
+}
+
+static void input_event_handler(struct input_handle *handle, unsigned int type,
+				unsigned int code, int value)
+{
+	if (type != EV_KEY)
+		return;
+
+	switch (code) {
+	case KEY_POWER:
+		power_pressed = value;
+		break;
+	case KEY_VOLUMEDOWN:
+		vol_down_pressed = value;
+		break;
+	case KEY_VOLUMEUP:
+		vol_up_pressed = value;
+		break;
+	default:
+		return;
+	}
+
+	if (!power_pressed || !vol_down_pressed ||
+	    !vol_up_pressed)
+		return;
+
+	schedule_work(&reboot_work);
+}
+
+static int input_handler_connect(struct input_handler *handler,
+				 struct input_dev *dev,
+				 const struct input_device_id *id)
+{
+	struct input_handle *handle;
+	int rc = 0;
+
+	handle = kzalloc(sizeof(*handle), GFP_KERNEL);
+	if (!handle)
+		return -ENOMEM;
+
+	handle->dev = dev;
+	handle->handler = handler;
+	handle->name = handler->name;
+
+	rc = input_register_handle(handle);
+	if (rc) {
+		pr_err("failed to register input handle\n");
+		goto error;
+	}
+
+	rc = input_open_device(handle);
+	if (rc) {
+		pr_err("failed to open input device\n");
+		goto error_unregister;
+	}
+
+	return 0;
+
+error_unregister:
+	input_unregister_handle(handle);
+
+error:
+	kfree(handle);
+
+	return rc;
+}
+
+static void input_handler_disconnect(struct input_handle *handle)
+{
+	 input_close_device(handle);
+	 input_unregister_handle(handle);
+	 kfree(handle);
+}
+
+static const struct input_device_id input_handler_ids[] = {
+	{
+		.flags = INPUT_DEVICE_ID_MATCH_EVBIT,
+		.evbit = { [BIT_WORD(EV_KEY)] = BIT_MASK(EV_KEY) },
+	},
+	{ },
+};
+
 static int msm_restart_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -718,6 +817,15 @@ static int msm_restart_probe(struct platform_device *pdev)
 
 	force_warm_reboot = of_property_read_bool(dev->of_node,
 						"qcom,force-warm-reboot");
+
+	INIT_WORK(&reboot_work, reboot_work_func);
+	handler.event = input_event_handler;
+	handler.connect = input_handler_connect;
+	handler.disconnect = input_handler_disconnect;
+	handler.name = "dload_mode";
+	handler.id_table = input_handler_ids;
+
+	input_register_handler(&handler);
 
 	return 0;
 
